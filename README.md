@@ -45,7 +45,7 @@ Nov  9 05:44:54
 Nov  9 05:45:01
 Nov  9 05:45:12
 
-$ cat /var/log/syslog | tail -10000 | cut -c1-15 | tshistogram -i 15m -f "Jan _2 15:04:05" -z Asia/Tokyo
+$ cat /var/log/syslog | tail -10000 | cut -c1-15 | tshistogram -i 15m -f stamp -z Asia/Tokyo
 Total count = 10000
 Time range  = 2023-11-09T09:55:33+09:00 - 2023-11-09T15:01:18+09:00
 
@@ -73,7 +73,7 @@ Time range  = 2023-11-09T09:55:33+09:00 - 2023-11-09T15:01:18+09:00
  [ 2023-11-09T15:00:00+09:00 ]     47  |||
 
 
-$ cat /var/log/syslog | cut -c1-15 | tshistogram -i 15m -f "Jan _2 15:04:05" -z Asia/Tokyo
+$ cat /var/log/syslog | cut -c1-15 | tshistogram -i 15m -f stamp -z Asia/Tokyo
 Total count = 202378
 Time range  = 2023-11-05T09:19:13+09:00 - 2023-11-09T15:07:59+09:00
 
@@ -95,4 +95,32 @@ Time range  = 2023-11-05T09:19:13+09:00 - 2023-11-09T15:07:59+09:00
  [ 2023-11-09T03:00:00+09:00 ]  11764  ||||||||||||||||||||||||||||||||||||||
  [ 2023-11-09T09:00:00+09:00 ]  11755  ||||||||||||||||||||||||||||||||||||||
  [ 2023-11-09T15:00:00+09:00 ]    278  
+```
+
+Supported time format layouts are:
+
+```
+  ANSIC       "Mon Jan _2 15:04:05 2006"
+  UnixDate    "Mon Jan _2 15:04:05 MST 2006"
+  RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
+  RFC822      "02 Jan 06 15:04 MST"
+  RFC822Z     "02 Jan 06 15:04 -0700"
+  RFC850      "Monday, 02-Jan-06 15:04:05 MST"
+  RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
+  RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
+  RFC3339     "2006-01-02T15:04:05Z07:00"
+  RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
+  Kitchen     "3:04PM"
+  Stamp       "Jan _2 15:04:05"
+  StampMilli  "Jan _2 15:04:05.000"
+  StampMicro  "Jan _2 15:04:05.000000"
+  StampNano   "Jan _2 15:04:05.000000000"
+  DateTime    "2006-01-02 15:04:05"
+  DateOnly    "2006-01-02"
+  TimeOnly    "15:04:05"
+  Unix        "1136239445"
+  Unix-Milli  "1136239445000"
+  Unix-Micro  "1136239445000000"
+
+  Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.
 ```
