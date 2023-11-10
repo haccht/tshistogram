@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ type options struct {
 	Interval string `short:"i" long:"interval" description:"Interval duration for each bins in the histogram" default:"5m"`
 	Format   string `short:"f" long:"format" description:"Time layout format to parse" default:"RFC3339"`
 	Timezone string `short:"z" long:"tz" description:"Override timezone"`
+	Help     bool   `short:"h" long:"help" description:"Show this help message"`
 }
 
 func parseTime(format, value string) (time.Time, error) {
@@ -83,12 +85,47 @@ func parseTime(format, value string) (time.Time, error) {
 
 func run() error {
 	var opts options
-	args, err := flags.Parse(&opts)
+
+	parser := flags.NewParser(&opts, flags.Default&^flags.HelpFlag)
+	parser.Usage = "[Options]"
+
+	args, err := parser.Parse()
 	if err != nil {
-		if fe, ok := err.(*flags.Error); ok && fe.Type == flags.ErrHelp {
-			os.Exit(0)
-		}
 		os.Exit(1)
+	}
+
+	if opts.Help {
+		var message bytes.Buffer
+
+		parser.WriteHelp(&message)
+		fmt.Fprint(&message, `
+Format Examples:
+  ANSIC       "Mon Jan _2 15:04:05 2006"
+  UnixDate    "Mon Jan _2 15:04:05 MST 2006"
+  RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
+  RFC822      "02 Jan 06 15:04 MST"
+  RFC822Z     "02 Jan 06 15:04 -0700"
+  RFC850      "Monday, 02-Jan-06 15:04:05 MST"
+  RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
+  RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
+  RFC3339     "2006-01-02T15:04:05Z07:00"
+  RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
+  Kitchen     "3:04PM"
+  Stamp       "Jan _2 15:04:05"
+  StampMilli  "Jan _2 15:04:05.000"
+  StampMicro  "Jan _2 15:04:05.000000"
+  StampNano   "Jan _2 15:04:05.000000000"
+  DateTime    "2006-01-02 15:04:05"
+  DateOnly    "2006-01-02"
+  TimeOnly    "15:04:05"
+  Unix        "1136239445"
+  Unix-Milli  "1136239445000"
+  Unix-Micro  "1136239445000000"
+
+  Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.`)
+
+		fmt.Println(message.String())
+		os.Exit(0)
 	}
 
 	readers := make([]io.Reader, 0, len(args)+1)
