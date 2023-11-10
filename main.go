@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -140,22 +139,27 @@ func run() error {
 		return nil
 	}
 
-	sort.Slice(plots, func(i, j int) bool {
-		return plots[i].Before(plots[j])
-	})
-
 	w, err := time.ParseDuration(opts.Interval)
 	if err != nil {
 		return fmt.Errorf("Unable to parse interval: %s", err)
 	}
-	min := plots[0].Truncate(w)
-	max := plots[len(plots)-1].Truncate(w)
+
+	min, max := plots[0], plots[0]
+	for _, plot := range plots {
+		if min.After(plot) {
+			min = plot
+		}
+		if max.Before(plot) {
+			max = plot
+		}
+	}
+	tmin := min.Truncate(w)
+    tmax := max.Truncate(w)
 
 	var mcount int
-	bins := make([]int, (max.UnixMicro()-min.UnixMicro())/w.Microseconds()+1)
-
+	bins := make([]int, (tmax.UnixMicro()-tmin.UnixMicro())/w.Microseconds()+1)
 	for _, plot := range plots {
-		idx := int((plot.UnixMicro() - min.UnixMicro()) / w.Microseconds())
+		idx := int((plot.UnixMicro() - tmin.UnixMicro()) / w.Microseconds())
 
 		bins[idx]++
 		if bins[idx] > mcount {
@@ -164,11 +168,11 @@ func run() error {
 	}
 
 	fmt.Printf("Total plots = %d\n", len(plots))
-	fmt.Printf("Time range  = %s - %s\n\n", plots[0].Format(time.RFC3339), plots[len(plots)-1].Format(time.RFC3339))
+	fmt.Printf("Time range  = %s - %s\n\n", min.Format(time.RFC3339), max.Format(time.RFC3339))
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
 	for idx, count := range bins {
-		bmin := min.Add(w * time.Duration(idx))
+		bmin := tmin.Add(w * time.Duration(idx))
 		bar := "  " + strings.Repeat("|", 40*count/mcount)
 
 		fmt.Fprintf(tw, "[\t%s\t]\t%6d\t%s\n", bmin.Format(time.RFC3339), count, bar)
