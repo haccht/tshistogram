@@ -135,10 +135,10 @@ func run() error {
 		return err
 	}
 
-    if len(plots) == 0 {
-        fmt.Printf("Total plots = 0\n")
-        return nil
-    }
+	if len(plots) == 0 {
+		fmt.Printf("Total plots = 0\n")
+		return nil
+	}
 
 	sort.Slice(plots, func(i, j int) bool {
 		return plots[i].Before(plots[j])
