@@ -135,6 +135,11 @@ func run() error {
 		return err
 	}
 
+    if len(plots) == 0 {
+        fmt.Printf("Total plots = 0\n")
+        return nil
+    }
+
 	sort.Slice(plots, func(i, j int) bool {
 		return plots[i].Before(plots[j])
 	})
@@ -158,7 +163,7 @@ func run() error {
 		}
 	}
 
-	fmt.Printf("Total count = %d\n", len(plots))
+	fmt.Printf("Total plots = %d\n", len(plots))
 	fmt.Printf("Time range  = %s - %s\n\n", plots[0].Format(time.RFC3339), plots[len(plots)-1].Format(time.RFC3339))
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
