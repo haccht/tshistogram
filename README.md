@@ -73,7 +73,7 @@ Time range  = 2023-11-09T09:55:33+09:00 - 2023-11-09T15:01:18+09:00
  [ 2023-11-09T15:00:00+09:00 ]     47  |||
 
 
-$ cat /var/log/syslog | cut -c1-15 | tshistogram -i 15m -f stamp -z Asia/Tokyo
+$ cat /var/log/syslog | cut -c1-15 | tshistogram -i 6h -f stamp -z Asia/Tokyo
 Total count = 202378
 Time range  = 2023-11-05T09:19:13+09:00 - 2023-11-09T15:07:59+09:00
 
