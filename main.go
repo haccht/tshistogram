@@ -154,7 +154,7 @@ func run() error {
 		}
 	}
 	tmin := min.Truncate(w)
-    tmax := max.Truncate(w)
+	tmax := max.Truncate(w)
 
 	var mcount int
 	bins := make([]int, (tmax.UnixMicro()-tmin.UnixMicro())/w.Microseconds()+1)
