@@ -16,9 +16,12 @@ import (
 )
 
 type options struct {
-	Interval string `short:"i" long:"interval" description:"Interval duration for each bins in the histogram" default:"5m"`
 	Format   string `short:"f" long:"format" description:"Time layout format to parse" default:"RFC3339"`
-	Timezone string `short:"z" long:"tz" description:"Override timezone"`
+	Interval string `short:"i" long:"interval" description:"Interval duration for each bins in the histogram" default:"5m"`
+	Timezone string `short:"z" long:"tz" description:"Timezone to display" default:"UTC"`
+	TimeFrom string `short:"s" long:"from" description:"Time range from"`
+	TimeTo   string `short:"e" long:"to" description:"Time range to"`
+    Width    int    `short:"w" long:"width" description:"Bar length" default:"40"`
 	Help     bool   `short:"h" long:"help" description:"Show this help message"`
 }
 
@@ -83,56 +86,88 @@ func parseTime(format, value string) (time.Time, error) {
 	}
 }
 
-func run() error {
-	var opts options
-
-	parser := flags.NewParser(&opts, flags.Default&^flags.HelpFlag)
+func parseOpts(args []string) (*options, []string, error) {
+	var o options
+	parser := flags.NewParser(&o, flags.Default&^flags.HelpFlag)
 	parser.Usage = "[Options]"
 
-	args, err := parser.Parse()
+	r, err := parser.ParseArgs(args)
 	if err != nil {
-		os.Exit(1)
+        return nil, nil, err
 	}
 
-	if opts.Help {
+	if o.Help {
 		var message bytes.Buffer
 
 		parser.WriteHelp(&message)
 		fmt.Fprint(&message, `
 Format Examples:
-  ANSIC       "Mon Jan _2 15:04:05 2006"
-  UnixDate    "Mon Jan _2 15:04:05 MST 2006"
-  RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
-  RFC822      "02 Jan 06 15:04 MST"
-  RFC822Z     "02 Jan 06 15:04 -0700"
-  RFC850      "Monday, 02-Jan-06 15:04:05 MST"
-  RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
-  RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
-  RFC3339     "2006-01-02T15:04:05Z07:00"
-  RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
-  Kitchen     "3:04PM"
-  Stamp       "Jan _2 15:04:05"
-  StampMilli  "Jan _2 15:04:05.000"
-  StampMicro  "Jan _2 15:04:05.000000"
-  StampNano   "Jan _2 15:04:05.000000000"
-  DateTime    "2006-01-02 15:04:05"
-  DateOnly    "2006-01-02"
-  TimeOnly    "15:04:05"
-  Unix        "1136239445"
-  Unix-Milli  "1136239445000"
-  Unix-Micro  "1136239445000000"
+    ANSIC       "Mon Jan _2 15:04:05 2006"
+    UnixDate    "Mon Jan _2 15:04:05 MST 2006"
+    RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
+    RFC822      "02 Jan 06 15:04 MST"
+    RFC822Z     "02 Jan 06 15:04 -0700"
+    RFC850      "Monday, 02-Jan-06 15:04:05 MST"
+    RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
+    RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
+    RFC3339     "2006-01-02T15:04:05Z07:00"
+    RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
+    Kitchen     "3:04PM"
+    Stamp       "Jan _2 15:04:05"
+    StampMilli  "Jan _2 15:04:05.000"
+    StampMicro  "Jan _2 15:04:05.000000"
+    StampNano   "Jan _2 15:04:05.000000000"
+    DateTime    "2006-01-02 15:04:05"
+    DateOnly    "2006-01-02"
+    TimeOnly    "15:04:05"
+    Unix        "1136239445"
+    Unix-Milli  "1136239445000"
+    Unix-Micro  "1136239445000000"
 
-  Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.`)
+    Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.`)
 
 		fmt.Println(message.String())
 		os.Exit(0)
 	}
+    return &o, r, nil
+}
 
-	readers := make([]io.Reader, 0, len(args)+1)
+func run() error {
+    opts, args, err := parseOpts(os.Args[1:])
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+
+	loc, err := time.LoadLocation(opts.Timezone)
+	if err != nil {
+		return err
+	}
+
+	wid, err := time.ParseDuration(opts.Interval)
+	if err != nil {
+		return err
+	}
+
+    var min time.Time
+	if opts.TimeFrom != "" {
+		if t, err := parseTime(opts.Format, opts.TimeFrom); err == nil {
+			min = t
+		}
+	}
+
+    var max time.Time
+	if opts.TimeTo != "" {
+		if t, err := parseTime(opts.Format, opts.TimeTo); err == nil {
+			max = t
+		}
+	}
+
+	readers := make([]io.Reader, 0)
 	for _, arg := range args {
 		f, err := os.Open(arg)
 		if err != nil {
-			return fmt.Errorf("failed to open file %s: %s", arg, err)
+			return err
 		}
 		defer f.Close()
 		readers = append(readers, f)
@@ -141,76 +176,67 @@ Format Examples:
 		readers = append(readers, os.Stdin)
 	}
 	if len(readers) == 0 {
-		os.Exit(0)
+        return fmt.Errorf("No input specified")
 	}
 
-	now := time.Now()
-	plots := make([]time.Time, 0, 1024*1024)
+	year := time.Now().Year()
+	items := make([]time.Time, 0, 1024*1024)
 
-	loc := time.UTC
-	if opts.Timezone != "" {
-		l, err := time.LoadLocation(opts.Timezone)
-		if err != nil {
-			return err
-		}
-		loc = l
-	}
-
-	scanner := bufio.NewScanner(io.MultiReader(readers...))
-	for scanner.Scan() {
-		text := strings.TrimSpace(scanner.Text())
-		if plot, err := parseTime(opts.Format, text); err == nil {
-			plot = plot.In(loc)
-			if plot.Year() == 0 {
-				plot = plot.AddDate(now.Year(), 0, 0)
+    sc := bufio.NewScanner(io.MultiReader(readers...))
+	for sc.Scan() {
+		text := strings.TrimSpace(sc.Text())
+		if item, err := parseTime(opts.Format, text); err == nil {
+			item = item.In(loc)
+			if item.Year() == 0 {
+				item = item.AddDate(year, 0, 0)
 			}
-			plots = append(plots, plot)
+			items = append(items, item)
 		}
 	}
-	if err := scanner.Err(); err != nil {
+	if err := sc.Err(); err != nil {
 		return err
 	}
 
-	if len(plots) == 0 {
-		fmt.Printf("Total plots = 0\n")
+	fmt.Printf("Total items = %d\n", len(items))
+	if len(items) == 0 {
 		return nil
 	}
 
-	w, err := time.ParseDuration(opts.Interval)
-	if err != nil {
-		return fmt.Errorf("Unable to parse interval: %s", err)
+	if min.Equal(time.Time{}) {
+        min = items[0]
 	}
 
-	min, max := plots[0], plots[0]
-	for _, plot := range plots {
-		if min.After(plot) {
-			min = plot
+	if max.Equal(time.Time{}) {
+        max = items[0]
+	}
+
+	for _, item := range items {
+		if min.After(item) {
+			min = item
 		}
-		if max.Before(plot) {
-			max = plot
+		if max.Before(item) {
+			max = item
 		}
 	}
-	tmin := min.Truncate(w)
-	tmax := max.Truncate(w)
 
-	var mcount int
-	bins := make([]int, (tmax.UnixMicro()-tmin.UnixMicro())/w.Microseconds()+1)
-	for _, plot := range plots {
-		idx := int((plot.UnixMicro() - tmin.UnixMicro()) / w.Microseconds())
+	tmin := min.Truncate(wid)
+	tmax := max.Truncate(wid)
 
+	var wmax int
+	bins := make([]int, (tmax.UnixMicro()-tmin.UnixMicro())/wid.Microseconds()+1)
+	for _, item := range items {
+		idx := int((item.UnixMicro() - tmin.UnixMicro()) / wid.Microseconds())
 		bins[idx]++
-		if bins[idx] > mcount {
-			mcount = bins[idx]
+		if bins[idx] > wmax {
+			wmax = bins[idx]
 		}
 	}
-
-	fmt.Printf("Total plots = %d\n", len(plots))
 	fmt.Printf("Time range  = %s - %s\n\n", min.Format(time.RFC3339), max.Format(time.RFC3339))
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
 	for idx, count := range bins {
-		bmin := tmin.Add(w * time.Duration(idx))
-		bar := "  " + strings.Repeat("|", 40*count/mcount)
+		bmin := tmin.Add(wid * time.Duration(idx))
+		bar := "  " + strings.Repeat("|", opts.Width*count/wmax)
 
 		fmt.Fprintf(tw, "[\t%s\t]\t%6d\t%s\n", bmin.Format(time.RFC3339), count, bar)
 	}
