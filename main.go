@@ -21,7 +21,7 @@ type options struct {
 	Timezone string `short:"z" long:"tz" description:"Timezone to display" default:"UTC"`
 	TimeFrom string `short:"s" long:"from" description:"Time range from"`
 	TimeTo   string `short:"e" long:"to" description:"Time range to"`
-    Width    int    `short:"w" long:"width" description:"Bar length" default:"40"`
+	Width    int    `short:"w" long:"width" description:"Bar length" default:"40"`
 	Help     bool   `short:"h" long:"help" description:"Show this help message"`
 }
 
@@ -86,20 +86,21 @@ func parseTime(format, value string) (time.Time, error) {
 	}
 }
 
-func parseOpts(args []string) (*options, []string, error) {
-	var o options
-	parser := flags.NewParser(&o, flags.Default&^flags.HelpFlag)
-	parser.Usage = "[Options]"
+func parseOpts(params []string) (*options, []string, error) {
+	var opts options
 
-	r, err := parser.ParseArgs(args)
+	fp := flags.NewParser(&opts, flags.Default&^flags.HelpFlag)
+	fp.Usage = "[Options]"
+
+	args, err := fp.ParseArgs(params)
 	if err != nil {
-        return nil, nil, err
+		return nil, nil, err
 	}
 
-	if o.Help {
+	if opts.Help {
 		var message bytes.Buffer
 
-		parser.WriteHelp(&message)
+		fp.WriteHelp(&message)
 		fmt.Fprint(&message, `
 Format Examples:
     ANSIC       "Mon Jan _2 15:04:05 2006"
@@ -129,38 +130,41 @@ Format Examples:
 		fmt.Println(message.String())
 		os.Exit(0)
 	}
-    return &o, r, nil
+	return &opts, args, nil
 }
 
 func run() error {
-    opts, args, err := parseOpts(os.Args[1:])
-    if err != nil {
-        fmt.Println(err)
-        os.Exit(1)
-    }
-
-	loc, err := time.LoadLocation(opts.Timezone)
+	opts, args, err := parseOpts(os.Args[1:])
 	if err != nil {
 		return err
 	}
 
-	wid, err := time.ParseDuration(opts.Interval)
+	tz, err := time.LoadLocation(opts.Timezone)
 	if err != nil {
 		return err
 	}
 
-    var min time.Time
+	tw, err := time.ParseDuration(opts.Interval)
+	if err != nil {
+		return err
+	}
+
+	var omin time.Time
 	if opts.TimeFrom != "" {
-		if t, err := parseTime(opts.Format, opts.TimeFrom); err == nil {
-			min = t
+		t, err := parseTime(opts.Format, opts.TimeFrom)
+		if err != nil {
+			return err
 		}
+		omin = t
 	}
 
-    var max time.Time
+	var omax time.Time
 	if opts.TimeTo != "" {
-		if t, err := parseTime(opts.Format, opts.TimeTo); err == nil {
-			max = t
+		t, err := parseTime(opts.Format, opts.TimeTo)
+		if err != nil {
+			return err
 		}
+		omax = t
 	}
 
 	readers := make([]io.Reader, 0)
@@ -176,71 +180,72 @@ func run() error {
 		readers = append(readers, os.Stdin)
 	}
 	if len(readers) == 0 {
-        return fmt.Errorf("No input specified")
+		return fmt.Errorf("No input specified")
 	}
 
-	year := time.Now().Year()
-	items := make([]time.Time, 0, 1024*1024)
+	var min, max time.Time
+	var bmax, bsum int
 
-    sc := bufio.NewScanner(io.MultiReader(readers...))
+	now := time.Now()
+	bins := make(map[time.Time]int, 1024)
+
+	sc := bufio.NewScanner(io.MultiReader(readers...))
 	for sc.Scan() {
 		text := strings.TrimSpace(sc.Text())
-		if item, err := parseTime(opts.Format, text); err == nil {
-			item = item.In(loc)
-			if item.Year() == 0 {
-				item = item.AddDate(year, 0, 0)
-			}
-			items = append(items, item)
+
+		t, err := parseTime(opts.Format, text)
+		if err != nil {
+			continue
+		}
+
+		t = t.In(tz)
+		if t.Year() == 0 {
+			t = t.AddDate(now.Year(), 0, 0)
+		}
+
+		if t.Before(min) || min.Equal(time.Time{}) {
+			min = t
+		}
+
+		if t.After(max) {
+			max = t
+		}
+
+		tt := t.Truncate(tw)
+
+		bsum++
+		bins[tt]++
+		if bins[tt] > bmax {
+			bmax = bins[tt]
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return err
 	}
 
-	fmt.Printf("Total items = %d\n", len(items))
-	if len(items) == 0 {
+	if !omin.Equal(time.Time{}) {
+		min = omin
+	}
+	tmin := min.Truncate(tw)
+
+	if !omax.Equal(time.Time{}) {
+		max = omax
+	}
+	tmax := max.Truncate(tw).Add(tw)
+
+	fmt.Printf("Total: %d items\n", bsum)
+	if bsum == 0 {
 		return nil
 	}
+	fmt.Printf("Range: %s - %s\n\n", min.Format(time.RFC3339), max.Format(time.RFC3339))
 
-	if min.Equal(time.Time{}) {
-        min = items[0]
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
+	for tt := tmin; tt.Before(tmax); tt = tt.Add(tw) {
+		cnt := bins[tt]
+		bar := "  " + strings.Repeat("|", opts.Width*cnt/bmax)
+		fmt.Fprintf(w, "[\t%s\t]\t%6d\t%s\n", tt.Format(time.RFC3339), cnt, bar)
 	}
-
-	if max.Equal(time.Time{}) {
-        max = items[0]
-	}
-
-	for _, item := range items {
-		if min.After(item) {
-			min = item
-		}
-		if max.Before(item) {
-			max = item
-		}
-	}
-
-	tmin := min.Truncate(wid)
-	tmax := max.Truncate(wid)
-
-	var wmax int
-	bins := make([]int, (tmax.UnixMicro()-tmin.UnixMicro())/wid.Microseconds()+1)
-	for _, item := range items {
-		idx := int((item.UnixMicro() - tmin.UnixMicro()) / wid.Microseconds())
-		bins[idx]++
-		if bins[idx] > wmax {
-			wmax = bins[idx]
-		}
-	}
-	fmt.Printf("Time range  = %s - %s\n\n", min.Format(time.RFC3339), max.Format(time.RFC3339))
-
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-	for idx, count := range bins {
-		bmin := tmin.Add(wid * time.Duration(idx))
-		bar := "  " + strings.Repeat("|", opts.Width*count/wmax)
-
-		fmt.Fprintf(tw, "[\t%s\t]\t%6d\t%s\n", bmin.Format(time.RFC3339), count, bar)
-	}
-	tw.Flush()
+	w.Flush()
 
 	return nil
 }
