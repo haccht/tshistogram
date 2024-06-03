@@ -12,77 +12,78 @@ import (
 	"time"
 
 	flags "github.com/jessevdk/go-flags"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 type options struct {
-	Format   string `short:"f" long:"format" description:"Time layout format to parse" default:"RFC3339"`
-	Interval string `short:"i" long:"interval" description:"Interval duration for each bins in the histogram" default:"5m"`
-	Timezone string `short:"z" long:"tz" description:"Timezone to display" default:"UTC"`
-	TimeFrom string `short:"s" long:"from" description:"Time range from"`
-	TimeTo   string `short:"e" long:"to" description:"Time range to"`
-	Width    int    `short:"w" long:"width" description:"Bar length" default:"40"`
-	Help     bool   `short:"h" long:"help" description:"Show this help message"`
+	TimeFormat   string `short:"f" long:"format" description:"Time layout to parse the input text" default:"RFC3339"`
+	TimeInterval string `short:"i" long:"interval" description:"Time interval to split the time range" default:"5m"`
+	TimeZone     string `long:"time-zone" description:"Time zone to display the legend" default:"UTC"`
+	TimeFrom     string `long:"time-from" description:"Time to display the chart from"`
+	TimeTo       string `long:"time-to" description:"Time to display the chart to"`
+	BarLength    int    `long:"bar-length" description:"Bar chart length" default:"60"`
+	BinSize      int    `long:"ubound" description:"Upper bound of the count"`
+	Help         bool   `short:"h" long:"help" description:"Show this help message"`
 }
 
-func parseTime(format, value string) (time.Time, error) {
-	switch strings.ToLower(format) {
+func parseTime(layout, text string, loc *time.Location) (time.Time, error) {
+	switch strings.ToLower(layout) {
 	case "unix":
-		f, err := strconv.ParseFloat(value, 64)
+		f, err := strconv.ParseFloat(text, 64)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", value)
+			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", text)
 		}
-		return time.UnixMicro(int64(f * 1000000)), nil
+		return time.UnixMicro(int64(f * 1000000)).In(loc), nil
 	case "unix.milli":
-		f, err := strconv.ParseFloat(value, 64)
+		f, err := strconv.ParseFloat(text, 64)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", value)
+			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", text)
 		}
-		return time.UnixMicro(int64(f * 1000)), nil
+		return time.UnixMicro(int64(f * 1000)).In(loc), nil
 	case "unix.micro":
-		f, err := strconv.ParseFloat(value, 64)
+		f, err := strconv.ParseFloat(text, 64)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", value)
+			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", text)
 		}
-		return time.UnixMicro(int64(f)), nil
+		return time.UnixMicro(int64(f)).In(loc), nil
 	case "ansic":
-		return time.Parse(time.ANSIC, value)
+		return time.Parse(time.ANSIC, text)
 	case "unixdate":
-		return time.Parse(time.UnixDate, value)
+		return time.Parse(time.UnixDate, text)
 	case "rubydate":
-		return time.Parse(time.RubyDate, value)
+		return time.Parse(time.RubyDate, text)
 	case "rfc822":
-		return time.Parse(time.RFC822, value)
+		return time.Parse(time.RFC822, text)
 	case "rfc822z":
-		return time.Parse(time.RFC822Z, value)
+		return time.Parse(time.RFC822Z, text)
 	case "rfc850":
-		return time.Parse(time.RFC850, value)
+		return time.Parse(time.RFC850, text)
 	case "rfc1123":
-		return time.Parse(time.RFC1123, value)
+		return time.Parse(time.RFC1123, text)
 	case "rfc1123z":
-		return time.Parse(time.RFC1123Z, value)
+		return time.Parse(time.RFC1123Z, text)
 	case "rfc3339":
-		return time.Parse(time.RFC3339, value)
+		return time.Parse(time.RFC3339, text)
 	case "rfc3339nano":
-		return time.Parse(time.RFC3339Nano, value)
+		return time.Parse(time.RFC3339Nano, text)
 	case "kitchen":
-		return time.Parse(time.Kitchen, value)
+		return time.Parse(time.Kitchen, text)
 	case "stamp":
-		return time.Parse(time.Stamp, value)
+		return time.Parse(time.Stamp, text)
 	case "stampmilli":
-		return time.Parse(time.StampMilli, value)
+		return time.Parse(time.StampMilli, text)
 	case "stampmicro":
-		return time.Parse(time.StampMicro, value)
+		return time.Parse(time.StampMicro, text)
 	case "stampnano":
-		return time.Parse(time.StampNano, value)
+		return time.Parse(time.StampNano, text)
 	case "datetime":
-		return time.Parse(time.DateTime, value)
+		return time.Parse(time.DateTime, text)
 	case "dateonly":
-		return time.Parse(time.DateOnly, value)
+		return time.Parse(time.DateOnly, text)
 	case "timeonly":
-		return time.Parse(time.TimeOnly, value)
+		return time.Parse(time.TimeOnly, text)
 	default:
-		return time.Parse(format, value)
+		return time.Parse(layout, text)
 	}
 }
 
@@ -139,32 +140,32 @@ func run() error {
 		return err
 	}
 
-	tz, err := time.LoadLocation(opts.Timezone)
+	loc, err := time.LoadLocation(opts.TimeZone)
 	if err != nil {
 		return err
 	}
 
-	tw, err := time.ParseDuration(opts.Interval)
+	gap, err := time.ParseDuration(opts.TimeInterval)
 	if err != nil {
 		return err
 	}
 
-	var omin time.Time
+	var timeFrom time.Time
 	if opts.TimeFrom != "" {
-		t, err := parseTime(opts.Format, opts.TimeFrom)
+		t, err := parseTime(opts.TimeFormat, opts.TimeFrom, loc)
 		if err != nil {
 			return err
 		}
-		omin = t
+		timeFrom = t
 	}
 
-	var omax time.Time
+	var timeTo time.Time
 	if opts.TimeTo != "" {
-		t, err := parseTime(opts.Format, opts.TimeTo)
+		t, err := parseTime(opts.TimeFormat, opts.TimeTo, loc)
 		if err != nil {
 			return err
 		}
-		omax = t
+		timeTo = t
 	}
 
 	readers := make([]io.Reader, 0)
@@ -176,74 +177,73 @@ func run() error {
 		defer f.Close()
 		readers = append(readers, f)
 	}
-	if !terminal.IsTerminal(0) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		readers = append(readers, os.Stdin)
 	}
 	if len(readers) == 0 {
 		return fmt.Errorf("No input specified")
 	}
 
-	var min, max time.Time
-	var bmax, bsum int
-
-	now := time.Now()
-	bins := make(map[time.Time]int, 1024)
-
-	sc := bufio.NewScanner(io.MultiReader(readers...))
-	for sc.Scan() {
-		text := strings.TrimSpace(sc.Text())
-
-		t, err := parseTime(opts.Format, text)
+	items := make([]time.Time, 0, 1024*1024)
+	scanner := bufio.NewScanner(io.MultiReader(readers...))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		t, err := parseTime(opts.TimeFormat, line, loc)
 		if err != nil {
 			continue
 		}
 
-		t = t.In(tz)
-		if t.Year() == 0 {
-			t = t.AddDate(now.Year(), 0, 0)
-		}
-
-		if t.Before(min) || min.Equal(time.Time{}) {
-			min = t
-		}
-
-		if t.After(max) {
-			max = t
-		}
-
-		tt := t.Truncate(tw)
-
-		bsum++
-		bins[tt]++
-		if bins[tt] > bmax {
-			bmax = bins[tt]
-		}
+		items = append(items, t)
 	}
-	if err := sc.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	if !omin.Equal(time.Time{}) {
-		min = omin
-	}
-	tmin := min.Truncate(tw)
-
-	if !omax.Equal(time.Time{}) {
-		max = omax
-	}
-	tmax := max.Truncate(tw).Add(tw)
-
-	fmt.Printf("Total: %d items\n", bsum)
-	if bsum == 0 {
+	fmt.Printf("Total: %d items\n", len(items))
+	if len(items) == 0 {
 		return nil
 	}
-	fmt.Printf("Range: %s - %s\n\n", min.Format(time.RFC3339), max.Format(time.RFC3339))
+
+	bins := make(map[time.Time]int, 1024)
+	binSize := 0
+
+	timeMin := items[0]
+	timeMax := items[0]
+	for _, t := range items {
+		tt := t.Truncate(gap)
+		bins[tt]++
+
+		if binSize < bins[tt] {
+			binSize = bins[tt]
+		}
+
+		if t.Before(timeMin) {
+			timeMin = t
+		}
+		if t.After(timeMax) {
+			timeMax = t
+		}
+	}
+
+	if opts.BinSize != 0 {
+		binSize = max(binSize, opts.BinSize)
+	}
+	if timeFrom.IsZero() {
+		timeFrom = timeMin.Truncate(gap)
+	}
+	if timeTo.IsZero() {
+		timeTo = timeMax.Truncate(gap).Add(gap)
+	}
+	fmt.Printf("Range: %s - %s\n\n", timeMin.Format(time.RFC3339), timeMax.Format(time.RFC3339))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-	for tt := tmin; tt.Before(tmax); tt = tt.Add(tw) {
-		cnt := bins[tt]
-		bar := "  " + strings.Repeat("|", opts.Width*cnt/bmax)
-		fmt.Fprintf(w, "[\t%s\t]\t%6d\t%s\n", tt.Format(time.RFC3339), cnt, bar)
+	for tt := timeFrom; tt.Before(timeTo); tt = tt.Add(gap) {
+		if tt.Year() == 0 {
+			tt = tt.AddDate(tt.Year(), 0, 0)
+		}
+
+		bar := strings.Repeat("|", bins[tt]*opts.BarLength/binSize)
+		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", tt.Format(time.RFC3339), bins[tt], bar)
 	}
 	w.Flush()
 
