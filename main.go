@@ -16,13 +16,13 @@ import (
 )
 
 type options struct {
-	TimeFormat   string `short:"f" long:"format" description:"Time layout to parse the input text" default:"RFC3339"`
-	TimeInterval string `short:"i" long:"interval" description:"Time interval to split the time range" default:"5m"`
-	TimeZone     string `long:"time-zone" description:"Time zone to display the legend" default:"UTC"`
+	TimeLayout   string `short:"f" long:"format" description:"Time format for parsing the input text" default:"RFC3339"`
+	TimeInterval string `short:"i" long:"interval" description:"Time duration for aggregation" default:"5m"`
 	TimeFrom     string `long:"time-from" description:"Time to display the chart from"`
 	TimeTo       string `long:"time-to" description:"Time to display the chart to"`
-	BarLength    int    `long:"bar-length" description:"Bar chart length" default:"60"`
-	BinSize      int    `long:"ubound" description:"Upper bound of the count"`
+	TimeZone     string `long:"time-zone" description:"TimeZone to display the time" default:"UTC"`
+	BarLength    int    `long:"barlength" description:"Bar length of the chart" default:"60"`
+	BinBound     int    `long:"bound" description:"Upper bound of the chart"`
 	Help         bool   `short:"h" long:"help" description:"Show this help message"`
 }
 
@@ -47,43 +47,43 @@ func parseTime(layout, text string, loc *time.Location) (time.Time, error) {
 		}
 		return time.UnixMicro(int64(f)).In(loc), nil
 	case "ansic":
-		return time.Parse(time.ANSIC, text)
+		return time.ParseInLocation(time.ANSIC, text, loc)
 	case "unixdate":
-		return time.Parse(time.UnixDate, text)
+		return time.ParseInLocation(time.UnixDate, text, loc)
 	case "rubydate":
-		return time.Parse(time.RubyDate, text)
+		return time.ParseInLocation(time.RubyDate, text, loc)
 	case "rfc822":
-		return time.Parse(time.RFC822, text)
+		return time.ParseInLocation(time.RFC822, text, loc)
 	case "rfc822z":
-		return time.Parse(time.RFC822Z, text)
+		return time.ParseInLocation(time.RFC822Z, text, loc)
 	case "rfc850":
-		return time.Parse(time.RFC850, text)
+		return time.ParseInLocation(time.RFC850, text, loc)
 	case "rfc1123":
-		return time.Parse(time.RFC1123, text)
+		return time.ParseInLocation(time.RFC1123, text, loc)
 	case "rfc1123z":
-		return time.Parse(time.RFC1123Z, text)
+		return time.ParseInLocation(time.RFC1123Z, text, loc)
 	case "rfc3339":
-		return time.Parse(time.RFC3339, text)
+		return time.ParseInLocation(time.RFC3339, text, loc)
 	case "rfc3339nano":
-		return time.Parse(time.RFC3339Nano, text)
+		return time.ParseInLocation(time.RFC3339Nano, text, loc)
 	case "kitchen":
-		return time.Parse(time.Kitchen, text)
+		return time.ParseInLocation(time.Kitchen, text, loc)
 	case "stamp":
-		return time.Parse(time.Stamp, text)
+		return time.ParseInLocation(time.Stamp, text, loc)
 	case "stampmilli":
-		return time.Parse(time.StampMilli, text)
+		return time.ParseInLocation(time.StampMilli, text, loc)
 	case "stampmicro":
-		return time.Parse(time.StampMicro, text)
+		return time.ParseInLocation(time.StampMicro, text, loc)
 	case "stampnano":
-		return time.Parse(time.StampNano, text)
+		return time.ParseInLocation(time.StampNano, text, loc)
 	case "datetime":
-		return time.Parse(time.DateTime, text)
+		return time.ParseInLocation(time.DateTime, text, loc)
 	case "dateonly":
-		return time.Parse(time.DateOnly, text)
+		return time.ParseInLocation(time.DateOnly, text, loc)
 	case "timeonly":
-		return time.Parse(time.TimeOnly, text)
+		return time.ParseInLocation(time.TimeOnly, text, loc)
 	default:
-		return time.Parse(layout, text)
+		return time.ParseInLocation(layout, text, loc)
 	}
 }
 
@@ -152,20 +152,20 @@ func run() error {
 
 	var timeFrom time.Time
 	if opts.TimeFrom != "" {
-		t, err := parseTime(opts.TimeFormat, opts.TimeFrom, loc)
+		t, err := parseTime(opts.TimeLayout, opts.TimeFrom, loc)
 		if err != nil {
 			return err
 		}
-		timeFrom = t
+		timeFrom = t.Truncate(gap)
 	}
 
 	var timeTo time.Time
 	if opts.TimeTo != "" {
-		t, err := parseTime(opts.TimeFormat, opts.TimeTo, loc)
+		t, err := parseTime(opts.TimeLayout, opts.TimeTo, loc)
 		if err != nil {
 			return err
 		}
-		timeTo = t
+		timeTo = t.Truncate(gap).Add(gap)
 	}
 
 	readers := make([]io.Reader, 0)
@@ -188,7 +188,7 @@ func run() error {
 	scanner := bufio.NewScanner(io.MultiReader(readers...))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		t, err := parseTime(opts.TimeFormat, line, loc)
+		t, err := parseTime(opts.TimeLayout, line, loc)
 		if err != nil {
 			continue
 		}
@@ -205,7 +205,7 @@ func run() error {
 	}
 
 	bins := make(map[time.Time]int, 1024)
-	binSize := 0
+	binBound := 0
 
 	timeMin := items[0]
 	timeMax := items[0]
@@ -213,10 +213,9 @@ func run() error {
 		tt := t.Truncate(gap)
 		bins[tt]++
 
-		if binSize < bins[tt] {
-			binSize = bins[tt]
+		if binBound < bins[tt] {
+			binBound = bins[tt]
 		}
-
 		if t.Before(timeMin) {
 			timeMin = t
 		}
@@ -224,9 +223,10 @@ func run() error {
 			timeMax = t
 		}
 	}
+	fmt.Printf("Range: %s - %s\n\n", timeMin.Format(time.RFC3339), timeMax.Format(time.RFC3339))
 
-	if opts.BinSize != 0 {
-		binSize = max(binSize, opts.BinSize)
+	if opts.BinBound != 0 {
+		binBound = max(binBound, opts.BinBound)
 	}
 	if timeFrom.IsZero() {
 		timeFrom = timeMin.Truncate(gap)
@@ -234,7 +234,6 @@ func run() error {
 	if timeTo.IsZero() {
 		timeTo = timeMax.Truncate(gap).Add(gap)
 	}
-	fmt.Printf("Range: %s - %s\n\n", timeMin.Format(time.RFC3339), timeMax.Format(time.RFC3339))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
 	for tt := timeFrom; tt.Before(timeTo); tt = tt.Add(gap) {
@@ -242,7 +241,7 @@ func run() error {
 			tt = tt.AddDate(tt.Year(), 0, 0)
 		}
 
-		bar := strings.Repeat("|", bins[tt]*opts.BarLength/binSize)
+		bar := strings.Repeat("|", opts.BarLength*bins[tt]/binBound)
 		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", tt.Format(time.RFC3339), bins[tt], bar)
 	}
 	w.Flush()
