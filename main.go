@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -38,6 +39,7 @@ const helpText = `Format Examples:
     Unix        "1136239445"
     Unix-Milli  "1136239445000"
     Unix-Micro  "1136239445000000"
+    Guess       (guess an appropriate format)
 
     Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.`
 
@@ -69,13 +71,10 @@ var epochLayouts = map[string]int64{
 }
 
 type options struct {
-	Format       string `short:"f" long:"format" description:"Time format for parsing the input text (default: guess)"`
-	TimeInterval string `short:"i" long:"interval" description:"Time duration for aggregation" default:"5m"`
-	TimeFrom     string `long:"time-from" description:"Time to display the chart from"`
-	TimeTo       string `long:"time-to" description:"Time to display the chart to"`
-	TimeZone     string `long:"time-zone" description:"TimeZone to display the time" default:"UTC"`
-	BarLength    int    `long:"barlength" description:"Bar length of the chart" default:"60"`
-	BinBound     int    `long:"bound" description:"Upper bound of the chart"`
+	Format       string `short:"f" long:"format" description:"Format for parsing the input time" default:"unix"`
+	TimeInterval string `short:"i" long:"gap" description:"Time duration to aggregate" default:"5m"`
+	Location     string `short:"z" long:"loc" description:"Override timezone" default:"UTC"`
+	BarLength    int    `short:"l" long:"barlength" description:"Bar length" default:"60"`
 	Help         bool   `short:"h" long:"help" description:"Show this help message"`
 }
 
@@ -94,7 +93,7 @@ var guessRules = []guessRule{
 }
 
 func stringToTime(s, format string) (time.Time, error) {
-	if format == "" {
+	if format == "guess" {
 		return guessTime(s)
 	}
 
@@ -126,11 +125,12 @@ func guessTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("Unknown format: %s", s)
 }
 
-func parseOpts(params []string) (*options, []string, error) {
+func parseFlags() (*options, []string, error) {
 	var opts options
+
 	parser := flags.NewParser(&opts, flags.Default&^flags.HelpFlag)
 	parser.Usage = "[Options]"
-	args, err := parser.ParseArgs(params)
+	args, err := parser.Parse()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -144,16 +144,63 @@ func parseOpts(params []string) (*options, []string, error) {
 		os.Exit(0)
 	}
 
+	opts.Format = strings.ToLower(opts.Format)
 	return &opts, args, nil
 }
 
+type bins struct {
+	base   time.Time
+	size   time.Duration
+	counts []int
+}
+
+func newBins(size time.Duration) *bins {
+	return &bins{
+		size:   size,
+		counts: []int{},
+	}
+}
+
+func (b *bins) add(t time.Time) {
+	if b.base.IsZero() {
+		b.base = t.Truncate(b.size)
+	}
+	idx := int(t.Sub(b.base) / b.size)
+
+	switch {
+	case idx < 0:
+		grow := -idx
+		b.counts = append(make([]int, grow), b.counts...)
+		b.base = b.base.Add(-time.Duration(grow) * b.size)
+		b.counts[0] = 1
+	case idx >= len(b.counts):
+		grow := idx - len(b.counts) + 1
+		b.counts = append(b.counts, make([]int, grow)...)
+		b.counts[idx] = 1
+	default:
+		b.counts[idx]++
+	}
+}
+
+func (b *bins) totalCount() int {
+	var s int
+	for _, v := range b.counts {
+		s += v
+	}
+	return s
+}
+
+func (b *bins) maxCount() int {
+	return slices.Max(b.counts)
+}
+
 func run() error {
-	opts, args, err := parseOpts(os.Args[1:])
+	opts, args, err := parseFlags()
 	if err != nil {
 		return err
 	}
 
-	loc, err := time.LoadLocation(opts.TimeZone)
+	loc, err := time.LoadLocation(opts.Location)
 	if err != nil {
 		return err
 	}
@@ -161,26 +208,6 @@ func run() error {
 	gap, err := time.ParseDuration(opts.TimeInterval)
 	if err != nil {
 		return err
-	}
-
-	format := strings.ToLower(opts.Format)
-
-	var timeFrom time.Time
-	if opts.TimeFrom != "" {
-		t, err := stringToTime(opts.TimeFrom, format)
-		if err != nil {
-			return err
-		}
-		timeFrom = t.In(loc).Truncate(gap)
-	}
-
-	var timeTo time.Time
-	if opts.TimeTo != "" {
-		t, err := stringToTime(opts.TimeTo, format)
-		if err != nil {
-			return err
-		}
-		timeTo = t.In(loc).Truncate(gap).Add(gap)
 	}
 
 	readers := make([]io.Reader, 0)
@@ -199,65 +226,38 @@ func run() error {
 		return fmt.Errorf("No input specified")
 	}
 
-	items := make([]time.Time, 0, 1024*1024)
+	h := newBins(gap)
+
 	scanner := bufio.NewScanner(io.MultiReader(readers...))
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		t, err := stringToTime(line, format)
+		s := strings.TrimSpace(scanner.Text())
+		t, err := stringToTime(s, opts.Format)
 		if err != nil {
 			continue
 		}
 
-		items = append(items, t.In(loc))
+		h.add(t)
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	fmt.Printf("Total: %d items\n", len(items))
-	if len(items) == 0 {
+	total := h.totalCount()
+	fmt.Printf("Total: %d items\n\n", total)
+	if total == 0 {
 		return nil
 	}
 
-	bins := make(map[time.Time]int, 1024)
-	binBound := 0
-
-	timeMin := items[0]
-	timeMax := items[0]
-	for _, t := range items {
-		tt := t.Truncate(gap)
-		bins[tt]++
-
-		if binBound < bins[tt] {
-			binBound = bins[tt]
-		}
-		if t.Before(timeMin) {
-			timeMin = t
-		}
-		if t.After(timeMax) {
-			timeMax = t
-		}
-	}
-	fmt.Printf("Range: %s - %s\n\n", timeMin.Format(time.RFC3339), timeMax.Format(time.RFC3339))
-
-	if opts.BinBound != 0 {
-		binBound = max(binBound, opts.BinBound)
-	}
-	if timeFrom.IsZero() {
-		timeFrom = timeMin.Truncate(gap)
-	}
-	if timeTo.IsZero() {
-		timeTo = timeMax.Truncate(gap).Add(gap)
-	}
-
+	max := h.maxCount()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-	for tt := timeFrom; tt.Before(timeTo); tt = tt.Add(gap) {
-		if tt.Year() == 0 {
-			tt = tt.AddDate(tt.Year(), 0, 0)
+	for i, c := range h.counts {
+		t := h.base.Add(time.Duration(i) * h.size)
+		if t.Year() == 0 {
+			t = t.AddDate(t.Year(), 0, 0)
 		}
 
-		bar := strings.Repeat("|", opts.BarLength*bins[tt]/binBound)
-		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", tt.Format(time.RFC3339), bins[tt], bar)
+		bar := strings.Repeat("|", opts.BarLength*c/max)
+		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", t.In(loc).Format(time.RFC3339), c, bar)
 	}
 	w.Flush()
 
