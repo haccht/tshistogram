@@ -147,27 +147,6 @@ func guessTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unknown format: %s", s)
 }
 
-type timeValue struct {
-	time.Time
-}
-
-func (tv *timeValue) String() string {
-	return tv.Format(time.RFC3339)
-}
-
-func (tv *timeValue) Set(value string) error {
-	t, err := guessTime(value)
-	if err != nil {
-		return fmt.Errorf("invalid timestamp %q: %w", value, err)
-	}
-	tv.Time = t
-	return nil
-}
-
-func (tv *timeValue) Type() string {
-	return "timestamp"
-}
-
 type locationValue struct {
 	*time.Location
 }
@@ -189,40 +168,49 @@ func (lv *locationValue) Type() string {
 	return "location"
 }
 
-type bins struct {
+type histogram struct {
 	base   time.Time
-	size   time.Duration
-	total  int
-	counts []int
+	binVol time.Duration
+	binCnt []int
+	series map[string][]int
 }
 
-func newBins(size time.Duration) *bins {
-	return &bins{
-		size:   size,
-		counts: []int{},
+func newHistogram(size time.Duration) *histogram {
+	return &histogram{
+		binCnt: make([]int, 0),
+		series: make(map[string][]int, 0),
+		binVol: size,
 	}
 }
 
-func (b *bins) add(t time.Time) {
-	if b.base.IsZero() {
-		b.base = t.Truncate(b.size)
-	}
-	idx := int(t.Sub(b.base) / b.size)
-	b.total++
-
+func increment(s []int, idx int) []int {
 	switch {
 	case idx < 0:
 		grow := -idx
-		b.counts = append(make([]int, grow), b.counts...)
-		b.base = b.base.Add(-time.Duration(grow) * b.size)
-		b.counts[0] = 1
-	case idx >= len(b.counts):
-		grow := idx - len(b.counts) + 1
-		b.counts = append(b.counts, make([]int, grow)...)
-		b.counts[idx] = 1
+		s[0]++
+		return append(make([]int, grow), s...)
+	case idx >= len(s):
+		grow := idx - len(s) + 1
+		s[idx]++
+		return append(s, make([]int, grow)...)
 	default:
-		b.counts[idx]++
+		s[idx]++
+		return s
 	}
+}
+
+func (h *histogram) add(t time.Time, label string) {
+	if h.base.IsZero() {
+		h.base = t.Truncate(h.binVol)
+	}
+
+	idx := int(t.Sub(h.base) / h.binVol)
+	if idx < 0 {
+		h.base = h.base.Add(time.Duration(idx) * h.binVol)
+	}
+
+	h.binCnt = increment(h.binCnt, idx)
+	h.series[label] = increment(h.series[label], idx)
 }
 
 func run() error {
@@ -244,7 +232,7 @@ func run() error {
 		reader = os.Stdin
 	}
 
-	b := newBins(opts.interval)
+	b := newHistogram(opts.interval)
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		s := strings.TrimSpace(scanner.Text())
@@ -253,24 +241,22 @@ func run() error {
 			continue
 		}
 
-		b.add(t)
+		b.add(t, "default")
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	fmt.Printf("Total: %d items\n\n", b.total)
-	if b.total == 0 {
+	/**
+	fmt.Printf("Total: %d items\n\n", b.binCnt)
+	if len(b.binCnt) == 0 {
 		return nil
-	}
+	}**/
 
-	m := slices.Max(b.counts)
+	m := slices.Max(b.binCnt)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-	for i, c := range b.counts {
-		t := b.base.Add(time.Duration(i) * b.size)
-		if t.Year() == 0 {
-			t = t.AddDate(t.Year(), 0, 0)
-		}
+	for i, c := range b.binCnt {
+		t := b.base.Add(b.binVol * time.Duration(i))
 
 		ts := t.In(opts.location.Location).Format(time.RFC3339)
 		bar := strings.Repeat("|", opts.barlen*c/m)
