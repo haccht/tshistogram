@@ -2,10 +2,10 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -13,37 +13,34 @@ import (
 	"text/tabwriter"
 	"time"
 
-	flags "github.com/jessevdk/go-flags"
-	"golang.org/x/term"
+	"github.com/spf13/pflag"
 )
 
-const helpText = `Format Examples:
-    ANSIC       "Mon Jan _2 15:04:05 2006"
-    UnixDate    "Mon Jan _2 15:04:05 MST 2006"
-    RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
-    RFC822      "02 Jan 06 15:04 MST"
-    RFC822Z     "02 Jan 06 15:04 -0700"
-    RFC850      "Monday, 02-Jan-06 15:04:05 MST"
-    RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
-    RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
-    RFC3339     "2006-01-02T15:04:05Z07:00"
-    RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
-    Kitchen     "3:04PM"
-    Stamp       "Jan _2 15:04:05"
-    StampMilli  "Jan _2 15:04:05.000"
-    StampMicro  "Jan _2 15:04:05.000000"
-    StampNano   "Jan _2 15:04:05.000000000"
-    DateTime    "2006-01-02 15:04:05"
-    DateOnly    "2006-01-02"
-    TimeOnly    "15:04:05"
-    Unix        "1136239445"
-    Unix-Milli  "1136239445000"
-    Unix-Micro  "1136239445000000"
-    Guess       (guess an appropriate format)
+const layoutExamples = `  ANSIC       "Mon Jan _2 15:04:05 2006"
+  UnixDate    "Mon Jan _2 15:04:05 MST 2006"
+  RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
+  RFC822      "02 Jan 06 15:04 MST"
+  RFC822Z     "02 Jan 06 15:04 -0700"
+  RFC850      "Monday, 02-Jan-06 15:04:05 MST"
+  RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
+  RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
+  RFC3339     "2006-01-02T15:04:05Z07:00"
+  RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
+  Kitchen     "3:04PM"
+  Stamp       "Jan _2 15:04:05"
+  StampMilli  "Jan _2 15:04:05.000"
+  StampMicro  "Jan _2 15:04:05.000000"
+  StampNano   "Jan _2 15:04:05.000000000"
+  DateTime    "2006-01-02 15:04:05"
+  DateOnly    "2006-01-02"
+  TimeOnly    "15:04:05"
+  Unix        "1136239445"
+  Unix-Milli  "1136239445000"
+  Unix-Micro  "1136239445000000"
 
-    Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.`
+  Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.`
 
-var layouts = map[string]string{
+var knownLayouts = map[string]string{
 	"ansic":       time.ANSIC,
 	"unixdate":    time.UnixDate,
 	"rubydate":    time.RubyDate,
@@ -70,14 +67,6 @@ var epochLayouts = map[string]int64{
 	"unix-micro": 1,
 }
 
-type options struct {
-	Format       string `short:"f" long:"format" description:"Format for parsing the input time" default:"unix"`
-	TimeInterval string `short:"i" long:"gap" description:"Time duration to aggregate" default:"5m"`
-	Location     string `short:"z" long:"loc" description:"Override timezone" default:"UTC"`
-	BarLength    int    `short:"l" long:"barlength" description:"Bar length" default:"60"`
-	Help         bool   `short:"h" long:"help" description:"Show this help message"`
-}
-
 type guessRule struct {
 	re      *regexp.Regexp
 	layouts []string
@@ -92,13 +81,43 @@ var guessRules = []guessRule{
 	{regexp.MustCompile(`\d{1,2}:\d{2}(AM|PM)`), []string{"kitchen"}},
 }
 
-func stringToTime(s, format string) (time.Time, error) {
-	if format == "guess" {
-		return guessTime(s)
+type options struct {
+	format   string
+	interval time.Duration
+	barlen   int
+	location locationValue
+	inputs   []string
+}
+
+func parseFlags() *options {
+	var opts options
+	opts.location.Location = time.Local
+
+	pflag.StringVarP(&opts.format, "format", "f", "", "Input time format (default: auto)")
+	pflag.DurationVarP(&opts.interval, "interval", "i", 5*time.Minute, "Bin width as duration (e.g. 30s, 1m, 1h)")
+	pflag.IntVarP(&opts.barlen, "barlength", "b", 60, "Length of the longest bar")
+	pflag.VarP(&opts.location, "location", "l", "Timezone location (e.g., UTC, Asia/Tokyo)")
+	pflag.CommandLine.SortFlags = false
+	pflag.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage:")
+		fmt.Fprintf(os.Stderr, "  %s [Options] [file...]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintln(os.Stderr, "Options:")
+		fmt.Fprintf(os.Stderr, "%s\n", pflag.CommandLine.FlagUsages())
+		fmt.Fprintln(os.Stderr, "Format Examples:")
+		fmt.Fprintf(os.Stderr, "%s\n", layoutExamples)
+		os.Exit(0)
 	}
 
-	if layout, ok := layouts[format]; ok {
-		return time.Parse(layout, s)
+	pflag.Parse()
+
+	opts.inputs = pflag.Args()
+	opts.format = strings.ToLower(opts.format)
+	return &opts
+}
+
+func stringToTime(s, format string) (time.Time, error) {
+	if format == "" {
+		return guessTime(s)
 	}
 
 	if scale, ok := epochLayouts[strings.ToLower(format)]; ok {
@@ -109,6 +128,9 @@ func stringToTime(s, format string) (time.Time, error) {
 		return time.UnixMicro(int64(v * float64(scale))), nil
 	}
 
+	if layout, ok := knownLayouts[format]; ok {
+		return time.Parse(layout, s)
+	}
 	return time.Time{}, fmt.Errorf("failed to parse time: %s", s)
 }
 
@@ -122,35 +144,55 @@ func guessTime(s string) (time.Time, error) {
 			}
 		}
 	}
-	return time.Time{}, fmt.Errorf("Unknown format: %s", s)
+	return time.Time{}, fmt.Errorf("unknown format: %s", s)
 }
 
-func parseFlags() (*options, []string, error) {
-	var opts options
+type timeValue struct {
+	time.Time
+}
 
-	parser := flags.NewParser(&opts, flags.Default&^flags.HelpFlag)
-	parser.Usage = "[Options]"
-	args, err := parser.Parse()
+func (tv *timeValue) String() string {
+	return tv.Format(time.RFC3339)
+}
+
+func (tv *timeValue) Set(value string) error {
+	t, err := guessTime(value)
 	if err != nil {
-		return nil, nil, err
+		return fmt.Errorf("invalid timestamp %q: %w", value, err)
 	}
+	tv.Time = t
+	return nil
+}
 
-	if opts.Help {
-		var message bytes.Buffer
-		parser.WriteHelp(&message)
-		fmt.Fprint(&message, "\n")
-		fmt.Fprint(&message, helpText)
-		fmt.Fprintln(os.Stdout, message.String())
-		os.Exit(0)
+func (tv *timeValue) Type() string {
+	return "timestamp"
+}
+
+type locationValue struct {
+	*time.Location
+}
+
+func (lv *locationValue) String() string {
+	return lv.Location.String()
+}
+
+func (lv *locationValue) Set(value string) error {
+	loc, err := time.LoadLocation(value)
+	if err != nil {
+		return fmt.Errorf("invalid location %q: %w", value, err)
 	}
+	lv.Location = loc
+	return nil
+}
 
-	opts.Format = strings.ToLower(opts.Format)
-	return &opts, args, nil
+func (lv *locationValue) Type() string {
+	return "location"
 }
 
 type bins struct {
 	base   time.Time
 	size   time.Duration
+	total  int
 	counts []int
 }
 
@@ -166,6 +208,7 @@ func (b *bins) add(t time.Time) {
 		b.base = t.Truncate(b.size)
 	}
 	idx := int(t.Sub(b.base) / b.size)
+	b.total++
 
 	switch {
 	case idx < 0:
@@ -182,82 +225,56 @@ func (b *bins) add(t time.Time) {
 	}
 }
 
-func (b *bins) totalCount() int {
-	var s int
-	for _, v := range b.counts {
-		s += v
-	}
-	return s
-}
-
-func (b *bins) maxCount() int {
-	return slices.Max(b.counts)
-}
-
 func run() error {
-	opts, args, err := parseFlags()
-	if err != nil {
-		return err
-	}
+	opts := parseFlags()
 
-	loc, err := time.LoadLocation(opts.Location)
-	if err != nil {
-		return err
-	}
-
-	gap, err := time.ParseDuration(opts.TimeInterval)
-	if err != nil {
-		return err
-	}
-
-	readers := make([]io.Reader, 0)
-	for _, arg := range args {
-		f, err := os.Open(arg)
-		if err != nil {
-			return err
+	var reader io.Reader
+	if len(opts.inputs) > 0 {
+		readers := make([]io.Reader, 0)
+		for _, file := range opts.inputs {
+			f, err := os.Open(file)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			readers = append(readers, f)
 		}
-		defer f.Close()
-		readers = append(readers, f)
-	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		readers = append(readers, os.Stdin)
-	}
-	if len(readers) == 0 {
-		return fmt.Errorf("No input specified")
+		reader = io.MultiReader(readers...)
+	} else {
+		reader = os.Stdin
 	}
 
-	h := newBins(gap)
-
-	scanner := bufio.NewScanner(io.MultiReader(readers...))
+	b := newBins(opts.interval)
+	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		s := strings.TrimSpace(scanner.Text())
-		t, err := stringToTime(s, opts.Format)
+		t, err := stringToTime(s, opts.format)
 		if err != nil {
 			continue
 		}
 
-		h.add(t)
+		b.add(t)
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	total := h.totalCount()
-	fmt.Printf("Total: %d items\n\n", total)
-	if total == 0 {
+	fmt.Printf("Total: %d items\n\n", b.total)
+	if b.total == 0 {
 		return nil
 	}
 
-	max := h.maxCount()
+	m := slices.Max(b.counts)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-	for i, c := range h.counts {
-		t := h.base.Add(time.Duration(i) * h.size)
+	for i, c := range b.counts {
+		t := b.base.Add(time.Duration(i) * b.size)
 		if t.Year() == 0 {
 			t = t.AddDate(t.Year(), 0, 0)
 		}
 
-		bar := strings.Repeat("|", opts.BarLength*c/max)
-		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", t.In(loc).Format(time.RFC3339), c, bar)
+		ts := t.In(opts.location.Location).Format(time.RFC3339)
+		bar := strings.Repeat("|", opts.barlen*c/m)
+		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", ts, c, bar)
 	}
 	w.Flush()
 
