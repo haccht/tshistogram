@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"maps"
 
 	"github.com/spf13/pflag"
 )
@@ -65,6 +66,32 @@ var epochLayouts = map[string]int64{
 	"unix":       1e6,
 	"unix-milli": 1e3,
 	"unix-micro": 1,
+}
+
+var barChars = []string{
+	"|",
+	"#",
+	"+",
+	"%",
+	"-",
+	"/",
+	".",
+	"@",
+}
+
+var colorPallets = []string{
+    "\x1b[38;5;250m", // other → グレー
+    "\x1b[38;5;196m", // 赤
+    "\x1b[38;5;46m",  // 緑
+    "\x1b[38;5;208m", // オレンジ
+    "\x1b[38;5;51m",  // シアン
+    "\x1b[38;5;27m",  // 青
+    "\x1b[38;5;226m", // 黄
+    "\x1b[38;5;201m", // マゼンタ
+}
+
+func colorize(s string, idx int) string {
+	return colorPallets[idx%len(colorPallets)] + s + "\x1b[0m"
 }
 
 type guessRule struct {
@@ -187,16 +214,16 @@ func increment(s []int, idx int) []int {
 	switch {
 	case idx < 0:
 		grow := -idx
-		s[0]++
-		return append(make([]int, grow), s...)
+ 		s = append(make([]int, grow), s...)
+		s[0] = 1
 	case idx >= len(s):
 		grow := idx - len(s) + 1
-		s[idx]++
-		return append(s, make([]int, grow)...)
+		s = append(s, make([]int, grow)...)
+		s[idx] = 1
 	default:
 		s[idx]++
-		return s
 	}
+	return s
 }
 
 func (h *histogram) add(t time.Time, label string) {
@@ -205,12 +232,11 @@ func (h *histogram) add(t time.Time, label string) {
 	}
 
 	idx := int(t.Sub(h.base) / h.binVol)
-	if idx < 0 {
-		h.base = h.base.Add(time.Duration(idx) * h.binVol)
-	}
-
 	h.binCnt = increment(h.binCnt, idx)
 	h.series[label] = increment(h.series[label], idx)
+	if idx < 0 {
+		h.base = h.base.Add(-time.Duration(-idx) * h.binVol)
+	}
 }
 
 func run() error {
@@ -232,34 +258,53 @@ func run() error {
 		reader = os.Stdin
 	}
 
-	b := newHistogram(opts.interval)
+	h := newHistogram(opts.interval)
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
-		s := strings.TrimSpace(scanner.Text())
-		t, err := stringToTime(s, opts.format)
+		line := scanner.Text()
+		parts := strings.SplitN(line, " ", 2)
+		t, err := stringToTime(strings.TrimSpace(parts[0]), opts.format)
 		if err != nil {
 			continue
 		}
 
-		b.add(t, "default")
+		h.add(t, parts[1])
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	/**
-	fmt.Printf("Total: %d items\n\n", b.binCnt)
-	if len(b.binCnt) == 0 {
+	var total int
+	for _, c := range h.binCnt {
+		total += c
+	}
+	fmt.Printf("Total:   %d items\n", total)
+	if total == 0 {
 		return nil
-	}**/
+	}
 
-	m := slices.Max(b.binCnt)
+	fmt.Printf("Labels:")
+	labels := slices.Sorted(maps.Keys(h.series))
+	for i, label := range labels {
+		fmt.Printf("  %s", colorize(label, i))
+	}
+	fmt.Println("")
+	fmt.Println("")
+
+	m := slices.Max(h.binCnt)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-	for i, c := range b.binCnt {
-		t := b.base.Add(b.binVol * time.Duration(i))
-
+	for i, c := range h.binCnt {
+		t := h.base.Add(h.binVol * time.Duration(i))
 		ts := t.In(opts.location.Location).Format(time.RFC3339)
-		bar := strings.Repeat("|", opts.barlen*c/m)
+
+		var bar string
+		for j, label := range labels {
+			chr := colorize("|", j)//barChars[j%len(barChars)]
+			if bin, ok := h.series[label]; ok && i < len(bin) {
+				bar += strings.Repeat(chr, opts.barlen*bin[i]/m)
+				fmt.Printf("%d - %s: %d\n", c, label, bin[i])
+			}
+		}
 		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", ts, c, bar)
 	}
 	w.Flush()
