@@ -244,39 +244,72 @@ func run() error {
 		reader = os.Stdin
 	}
 
-	b := newBins(opts.interval)
+	seriesBins := make(map[string]*bins)
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
-		s := strings.TrimSpace(scanner.Text())
-		t, err := stringToTime(s, opts.format)
+		fields := strings.Fields(strings.TrimSpace(scanner.Text()))
+		if len(fields) == 0 {
+			continue
+		}
+		timeStr := fields[0]
+		seriesName := ""
+		if len(fields) > 1 {
+			seriesName = fields[1]
+		}
+
+		t, err := stringToTime(timeStr, opts.format)
 		if err != nil {
 			continue
 		}
 
-		b.add(t)
+		if _, ok := seriesBins[seriesName]; !ok {
+			seriesBins[seriesName] = newBins(opts.interval)
+		}
+		seriesBins[seriesName].add(t)
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	fmt.Printf("Total: %d items\n\n", b.total)
-	if b.total == 0 {
+	total := 0
+	for _, b := range seriesBins {
+		total += b.total
+	}
+	fmt.Printf("Total: %d items\n\n", total)
+	if total == 0 {
 		return nil
 	}
 
-	m := slices.Max(b.counts)
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-	for i, c := range b.counts {
-		t := b.base.Add(time.Duration(i) * b.size)
-		if t.Year() == 0 {
-			t = t.AddDate(t.Year(), 0, 0)
-		}
-
-		ts := t.In(opts.location.Location).Format(time.RFC3339)
-		bar := strings.Repeat("|", opts.barlen*c/m)
-		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", ts, c, bar)
+	seriesNames := make([]string, 0, len(seriesBins))
+	for name := range seriesBins {
+		seriesNames = append(seriesNames, name)
 	}
-	w.Flush()
+	slices.Sort(seriesNames)
+
+	for _, seriesName := range seriesNames {
+		b := seriesBins[seriesName]
+		if seriesName == "" {
+			fmt.Printf("--- Series: (default) ---\n")
+		} else {
+			fmt.Printf("--- Series: %s ---\n", seriesName)
+		}
+		fmt.Printf("Total: %d items\n", b.total)
+
+		m := slices.Max(b.counts)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
+		for i, c := range b.counts {
+			t := b.base.Add(time.Duration(i) * b.size)
+			if t.Year() == 0 {
+				t = t.AddDate(t.Year(), 0, 0)
+			}
+
+			ts := t.In(opts.location.Location).Format(time.RFC3339)
+			bar := strings.Repeat("|", opts.barlen*c/m)
+			fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", ts, c, bar)
+		}
+		w.Flush()
+		fmt.Println()
+	}
 
 	return nil
 }
