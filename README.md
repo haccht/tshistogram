@@ -2,14 +2,19 @@
 
 Render time series data as a histogram in the terminal.
 
+## Features
 
+- **Automatic timestamp parsing**: By default, `tshistogram` automatically detects and parses various common timestamp formats. If you have a specific or ambiguous format, you can specify it with the `-f` option.
+- **Multi-series support**: `tshistogram` can process multiple time series from standard input or multiple files. The text on the line following the timestamp is treated as the series name. The histogram will then show different series with different colors (or characters) and display a legend.
+
+## Usage
 ```
 $ tshistogram -h
 Usage:
   tshistogram [Options] [file...]
 
 Options:
-  -f, --format string       Input time format (default: auto)
+  -f, --format string       Input time format. By default, it automatically detects the format.
   -i, --interval duration   Bin width as duration (e.g. 30s, 1m, 1h) (default 5m0s)
   -b, --barlength int       Length of the longest bar (default 60)
   -l, --location location   Timezone location (e.g., UTC, Asia/Tokyo) (default Local)
@@ -118,4 +123,28 @@ Time range  = 2023-11-05T09:19:13+09:00 - 2023-11-09T15:07:59+09:00
  [ 2023-11-09T03:00:00+09:00 ]  11764  ||||||||||||||||||||||||||||||||||||||
  [ 2023-11-09T09:00:00+09:00 ]  11755  ||||||||||||||||||||||||||||||||||||||
  [ 2023-11-09T15:00:00+09:00 ]    278  
+```
+
+### Multi-series Example
+
+Here is an example with multi-series data. The `--color=never` flag is used to render the histogram with different characters for each series, which is useful for environments that don't support ANSI color codes.
+
+```
+$ cat <<EOF | go run main.go -i 1m --color never
+2023-11-09T10:00:15Z seriesA
+2023-11-09T10:00:25Z seriesA
+2023-11-09T10:00:35Z seriesB
+2023-11-09T10:01:05Z seriesA
+2023-11-09T10:01:45Z seriesC
+2023-11-09T10:01:55Z seriesB
+EOF
+Total count: 6
+Time range:  2023-11-09T10:00:15Z - 2023-11-09T10:01:55Z
+Legend:
+    | = seriesA
+    x = seriesB
+    o = seriesC
+
+ [ 2023-11-09T10:00:00Z ]      3  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ [ 2023-11-09T10:01:00Z ]      3  ||||||||||||||||||||||||||||||||||||||||xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxoooooooooooooooooooooooooooooooooooooooo
 ```
