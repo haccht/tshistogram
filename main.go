@@ -86,7 +86,7 @@ type options struct {
 	interval time.Duration
 	barlen   int
 	location locationValue
-	style    string
+	color    string
 	inputs   []string
 }
 
@@ -98,7 +98,7 @@ func parseFlags() *options {
 	pflag.DurationVarP(&opts.interval, "interval", "i", 5*time.Minute, "Bin width as duration (e.g. 30s, 1m, 1h)")
 	pflag.IntVarP(&opts.barlen, "barlength", "b", 60, "Length of the longest bar")
 	pflag.VarP(&opts.location, "location", "l", "Timezone location (e.g., UTC, Asia/Tokyo)")
-	pflag.StringVar(&opts.style, "style", "char", "Output style: 'char' for characters, 'color' for ANSI colors")
+	pflag.StringVar(&opts.color, "color", "auto", "When to use color: 'never', 'always', 'auto'")
 	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage:")
@@ -192,11 +192,13 @@ func (lv *locationValue) Type() string {
 }
 
 type bins struct {
-	base   time.Time
-	size   time.Duration
-	total  int
-	counts []map[string]int
-	series map[string]bool
+	base    time.Time
+	size    time.Duration
+	total   int
+	counts  []map[string]int
+	series  map[string]bool
+	minTime time.Time
+	maxTime time.Time
 }
 
 func newBins(size time.Duration) *bins {
@@ -208,6 +210,13 @@ func newBins(size time.Duration) *bins {
 }
 
 func (b *bins) add(t time.Time, seriesName string) {
+	if b.minTime.IsZero() || t.Before(b.minTime) {
+		b.minTime = t
+	}
+	if b.maxTime.IsZero() || t.After(b.maxTime) {
+		b.maxTime = t
+	}
+
 	if b.base.IsZero() {
 		b.base = t.Truncate(b.size)
 	}
@@ -295,10 +304,31 @@ func run() error {
 		return err
 	}
 
-	fmt.Printf("Total: %d items\n\n", b.total)
 	if b.total == 0 {
+		fmt.Println("Total count = 0")
 		return nil
 	}
+
+	var effectiveStyle string
+	switch opts.color {
+	case "always":
+		effectiveStyle = "color"
+	case "never":
+		effectiveStyle = "char"
+	default: // "auto"
+		if len(b.series) > 1 {
+			effectiveStyle = "color"
+		} else {
+			effectiveStyle = "char"
+		}
+	}
+
+	fmt.Printf("Total count = %d\n", b.total)
+	loc := opts.location.Location
+	if !b.minTime.IsZero() && !b.maxTime.IsZero() {
+		fmt.Printf("Time range  = %s - %s\n", b.minTime.In(loc).Format(time.RFC3339), b.maxTime.In(loc).Format(time.RFC3339))
+	}
+	fmt.Println()
 
 	seriesNames := make([]string, 0, len(b.series))
 	for name := range b.series {
@@ -306,25 +336,32 @@ func run() error {
 	}
 	slices.Sort(seriesNames)
 
-	fmt.Println("Legend:")
 	charStyles := make(map[string]rune)
 	colorStyles := make(map[string]string)
 	for i, name := range seriesNames {
-		displayName := name
-		if name == "" {
-			displayName = "(default)"
-		}
-		if opts.style == "char" {
-			char := barChars[i%len(barChars)]
-			charStyles[name] = char
-			fmt.Printf("  %c: %s\n", char, displayName)
-		} else { // color style
-			color := barColors[i%len(barColors)]
-			colorStyles[name] = color
-			fmt.Printf("  %s|%s: %s\n", color, colorReset, displayName)
+		if effectiveStyle == "char" {
+			charStyles[name] = barChars[i%len(barChars)]
+		} else {
+			colorStyles[name] = barColors[i%len(barColors)]
 		}
 	}
-	fmt.Println()
+
+	isDefaultSeriesOnly := len(seriesNames) == 1 && seriesNames[0] == ""
+	if !isDefaultSeriesOnly {
+		fmt.Println("Legend:")
+		for _, name := range seriesNames {
+			displayName := name
+			if name == "" {
+				displayName = "(default)"
+			}
+			if effectiveStyle == "char" {
+				fmt.Printf("  %c: %s\n", charStyles[name], displayName)
+			} else {
+				fmt.Printf("  %s|%s: %s\n", colorStyles[name], colorReset, displayName)
+			}
+		}
+		fmt.Println()
+	}
 
 	maxTotalInBin := 0
 	for _, seriesCounts := range b.counts {
@@ -396,7 +433,7 @@ func run() error {
 		var barBuilder strings.Builder
 		for _, seriesName := range seriesNames {
 			if barPartLen, ok := barLens[seriesName]; ok && barPartLen > 0 {
-				if opts.style == "char" {
+				if effectiveStyle == "char" {
 					barBuilder.WriteString(strings.Repeat(string(charStyles[seriesName]), barPartLen))
 				} else {
 					barBuilder.WriteString(colorStyles[seriesName])
