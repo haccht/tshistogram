@@ -157,8 +157,6 @@ func parseFlags() (*options, error) {
 	}
 
 	pflag.Parse()
-	opts.format = strings.ToLower(opts.format)
-
 	return &opts, nil
 }
 
@@ -213,11 +211,12 @@ func genReader(inputs []string) (io.Reader, error) {
 }
 
 func stringToTime(s, format string) (time.Time, error) {
-	if format == "" {
+	lformat := strings.ToLower(format)
+	if lformat == "" {
 		return guessTime(s)
 	}
 
-	if scale, ok := epochLayouts[strings.ToLower(format)]; ok {
+	if scale, ok := epochLayouts[lformat]; ok {
 		v, err := strconv.ParseFloat(s, 64)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", s)
@@ -225,10 +224,11 @@ func stringToTime(s, format string) (time.Time, error) {
 		return time.UnixMicro(int64(v * float64(scale))), nil
 	}
 
-	if layout, ok := knownLayouts[format]; ok {
+	if layout, ok := knownLayouts[lformat]; ok {
 		return time.Parse(layout, s)
 	}
-	return time.Time{}, fmt.Errorf("failed to parse time: %s", s)
+
+	return time.Parse(format, s)
 }
 
 func guessTime(s string) (time.Time, error) {
@@ -247,21 +247,9 @@ func guessTime(s string) (time.Time, error) {
 func parseLeadingTime(s, format string) (time.Time, string) {
 	fields := strings.Split(s, " ")
 
-	if format == "" {
-		for i := range len(fields) {
-			n := i+1
-			part1 := strings.Join(fields[:n], " ")
-			part2 := strings.Join(fields[n:], " ")
-
-			t, err := stringToTime(part1, format)
-			if err == nil {
-				return t, part2
-			}
-		}
-	} else {
-		n := len(strings.Split(format, " "))
-		part1 := strings.Join(fields[:n], " ")
-		part2 := strings.Join(fields[n:], " ")
+	for i := range len(fields) {
+		part1 := strings.Join(fields[:i+1], " ")
+		part2 := strings.Join(fields[i+1:], " ")
 
 		t, err := stringToTime(part1, format)
 		if err == nil {
