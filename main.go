@@ -369,8 +369,65 @@ func run() error {
 		return fmt.Errorf("invalid color \"%s\"", opts.color)
 	}
 
-	seriesNames := slices.Collect(maps.Keys(b.series))
-	slices.Sort(seriesNames)
+	var seriesNames []string
+	const seriesLimit = 13
+	const topN = 11
+	const otherName = "other"
+
+	if len(b.series) >= seriesLimit {
+		seriesTotals := make(map[string]int)
+		for _, binCounts := range b.counts {
+			for seriesName, count := range binCounts {
+				seriesTotals[seriesName] += count
+			}
+		}
+
+		allSeriesNames := slices.Collect(maps.Keys(b.series))
+		slices.SortFunc(allSeriesNames, func(a, b string) int {
+			if seriesTotals[b] != seriesTotals[a] {
+				return seriesTotals[b] - seriesTotals[a]
+			}
+			return strings.Compare(a, b)
+		})
+
+		topSeries := allSeriesNames[:topN]
+		otherSeriesSet := make(map[string]struct{})
+		for _, s := range allSeriesNames[topN:] {
+			otherSeriesSet[s] = struct{}{}
+		}
+
+		newCounts := make([]map[string]int, len(b.counts))
+		hasOther := false
+		for i, binCounts := range b.counts {
+			newBinCounts := make(map[string]int)
+			for seriesName, count := range binCounts {
+				if _, isOther := otherSeriesSet[seriesName]; isOther {
+					newBinCounts[otherName] += count
+					hasOther = true
+				} else {
+					newBinCounts[seriesName] = count
+				}
+			}
+			newCounts[i] = newBinCounts
+		}
+		b.counts = newCounts
+
+		slices.Sort(topSeries)
+		seriesNames = topSeries
+		if hasOther {
+			seriesNames = append(seriesNames, otherName)
+		}
+
+		newSeriesMap := make(map[string]bool)
+		for _, name := range seriesNames {
+			newSeriesMap[name] = true
+		}
+		b.series = newSeriesMap
+
+	} else {
+		seriesNames = slices.Collect(maps.Keys(b.series))
+		slices.Sort(seriesNames)
+	}
 
 	var styleFunc func(string, int) string
 	if style == barCharStyle {
