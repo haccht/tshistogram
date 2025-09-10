@@ -86,6 +86,7 @@ type options struct {
 	interval time.Duration
 	barlen   int
 	location locationValue
+	style    string
 	inputs   []string
 }
 
@@ -97,6 +98,7 @@ func parseFlags() *options {
 	pflag.DurationVarP(&opts.interval, "interval", "i", 5*time.Minute, "Bin width as duration (e.g. 30s, 1m, 1h)")
 	pflag.IntVarP(&opts.barlen, "barlength", "b", 60, "Length of the longest bar")
 	pflag.VarP(&opts.location, "location", "l", "Timezone location (e.g., UTC, Asia/Tokyo)")
+	pflag.StringVar(&opts.style, "style", "char", "Output style: 'char' for characters, 'color' for ANSI colors")
 	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage:")
@@ -193,37 +195,62 @@ type bins struct {
 	base   time.Time
 	size   time.Duration
 	total  int
-	counts []int
+	counts []map[string]int
+	series map[string]bool
 }
 
 func newBins(size time.Duration) *bins {
 	return &bins{
 		size:   size,
-		counts: []int{},
+		counts: []map[string]int{},
+		series: make(map[string]bool),
 	}
 }
 
-func (b *bins) add(t time.Time) {
+func (b *bins) add(t time.Time, seriesName string) {
 	if b.base.IsZero() {
 		b.base = t.Truncate(b.size)
 	}
 	idx := int(t.Sub(b.base) / b.size)
 	b.total++
+	b.series[seriesName] = true
 
 	switch {
 	case idx < 0:
 		grow := -idx
-		b.counts = append(make([]int, grow), b.counts...)
+		newCounts := make([]map[string]int, grow)
+		b.counts = append(newCounts, b.counts...)
 		b.base = b.base.Add(-time.Duration(grow) * b.size)
-		b.counts[0] = 1
+		b.counts[0] = map[string]int{seriesName: 1}
 	case idx >= len(b.counts):
 		grow := idx - len(b.counts) + 1
-		b.counts = append(b.counts, make([]int, grow)...)
-		b.counts[idx] = 1
+		b.counts = append(b.counts, make([]map[string]int, grow)...)
+		b.counts[idx] = map[string]int{seriesName: 1}
 	default:
-		b.counts[idx]++
+		if b.counts[idx] == nil {
+			b.counts[idx] = make(map[string]int)
+		}
+		b.counts[idx][seriesName]++
 	}
 }
+
+var barChars = []rune{'|', '#', '=', '*', '+', '@', '$', '%', '&'}
+
+var barColors = []string{
+	"\x1b[31m", // Red
+	"\x1b[32m", // Green
+	"\x1b[33m", // Yellow
+	"\x1b[34m", // Blue
+	"\x1b[35m", // Magenta
+	"\x1b[36m", // Cyan
+	"\x1b[91m", // Bright Red
+	"\x1b[92m", // Bright Green
+	"\x1b[93m", // Bright Yellow
+	"\x1b[94m", // Bright Blue
+	"\x1b[95m", // Bright Magenta
+	"\x1b[96m", // Bright Cyan
+}
+const colorReset = "\x1b[0m"
 
 func run() error {
 	opts := parseFlags()
@@ -244,7 +271,7 @@ func run() error {
 		reader = os.Stdin
 	}
 
-	seriesBins := make(map[string]*bins)
+	b := newBins(opts.interval)
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		fields := strings.Fields(strings.TrimSpace(scanner.Text()))
@@ -262,54 +289,126 @@ func run() error {
 			continue
 		}
 
-		if _, ok := seriesBins[seriesName]; !ok {
-			seriesBins[seriesName] = newBins(opts.interval)
-		}
-		seriesBins[seriesName].add(t)
+		b.add(t, seriesName)
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	total := 0
-	for _, b := range seriesBins {
-		total += b.total
-	}
-	fmt.Printf("Total: %d items\n\n", total)
-	if total == 0 {
+	fmt.Printf("Total: %d items\n\n", b.total)
+	if b.total == 0 {
 		return nil
 	}
 
-	seriesNames := make([]string, 0, len(seriesBins))
-	for name := range seriesBins {
+	seriesNames := make([]string, 0, len(b.series))
+	for name := range b.series {
 		seriesNames = append(seriesNames, name)
 	}
 	slices.Sort(seriesNames)
 
-	for _, seriesName := range seriesNames {
-		b := seriesBins[seriesName]
-		if seriesName == "" {
-			fmt.Printf("--- Series: (default) ---\n")
-		} else {
-			fmt.Printf("--- Series: %s ---\n", seriesName)
+	fmt.Println("Legend:")
+	charStyles := make(map[string]rune)
+	colorStyles := make(map[string]string)
+	for i, name := range seriesNames {
+		displayName := name
+		if name == "" {
+			displayName = "(default)"
 		}
-		fmt.Printf("Total: %d items\n", b.total)
-
-		m := slices.Max(b.counts)
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
-		for i, c := range b.counts {
-			t := b.base.Add(time.Duration(i) * b.size)
-			if t.Year() == 0 {
-				t = t.AddDate(t.Year(), 0, 0)
-			}
-
-			ts := t.In(opts.location.Location).Format(time.RFC3339)
-			bar := strings.Repeat("|", opts.barlen*c/m)
-			fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", ts, c, bar)
+		if opts.style == "char" {
+			char := barChars[i%len(barChars)]
+			charStyles[name] = char
+			fmt.Printf("  %c: %s\n", char, displayName)
+		} else { // color style
+			color := barColors[i%len(barColors)]
+			colorStyles[name] = color
+			fmt.Printf("  %s|%s: %s\n", color, colorReset, displayName)
 		}
-		w.Flush()
-		fmt.Println()
 	}
+	fmt.Println()
+
+	maxTotalInBin := 0
+	for _, seriesCounts := range b.counts {
+		currentTotal := 0
+		if seriesCounts != nil {
+			for _, count := range seriesCounts {
+				currentTotal += count
+			}
+		}
+		if currentTotal > maxTotalInBin {
+			maxTotalInBin = currentTotal
+		}
+	}
+
+	if maxTotalInBin == 0 {
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.AlignRight)
+	for i, seriesCounts := range b.counts {
+		t := b.base.Add(time.Duration(i) * b.size)
+		if t.Year() == 0 {
+			t = t.AddDate(t.Year(), 0, 0)
+		}
+		ts := t.In(opts.location.Location).Format(time.RFC3339)
+
+		totalInBin := 0
+		if seriesCounts != nil {
+			for _, count := range seriesCounts {
+				totalInBin += count
+			}
+		}
+
+		if totalInBin == 0 {
+			fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", ts, 0, "")
+			continue
+		}
+
+		currentBarTotalLen := (opts.barlen * totalInBin) / maxTotalInBin
+
+		barLens := make(map[string]int)
+		remainders := make(map[string]int)
+		totalLenAssigned := 0
+
+		for _, seriesName := range seriesNames {
+			if count, ok := seriesCounts[seriesName]; ok {
+				val := (count * currentBarTotalLen * 100) / totalInBin
+				barLens[seriesName] = val / 100
+				remainders[seriesName] = val % 100
+				totalLenAssigned += barLens[seriesName]
+			}
+		}
+
+		lenToDistribute := currentBarTotalLen - totalLenAssigned
+
+		sortedByRemainder := make([]string, 0, len(remainders))
+		for name := range remainders {
+			sortedByRemainder = append(sortedByRemainder, name)
+		}
+		slices.SortStableFunc(sortedByRemainder, func(a, b string) int {
+			return remainders[b] - remainders[a]
+		})
+
+		for i := 0; i < lenToDistribute; i++ {
+			seriesToIncrement := sortedByRemainder[i%len(sortedByRemainder)]
+			barLens[seriesToIncrement]++
+		}
+
+		var barBuilder strings.Builder
+		for _, seriesName := range seriesNames {
+			if barPartLen, ok := barLens[seriesName]; ok && barPartLen > 0 {
+				if opts.style == "char" {
+					barBuilder.WriteString(strings.Repeat(string(charStyles[seriesName]), barPartLen))
+				} else {
+					barBuilder.WriteString(colorStyles[seriesName])
+					barBuilder.WriteString(strings.Repeat("|", barPartLen))
+					barBuilder.WriteString(colorReset)
+				}
+			}
+		}
+
+		fmt.Fprintf(w, "[\t%s\t]\t%6d\t  %s\n", ts, totalInBin, barBuilder.String())
+	}
+	w.Flush()
 
 	return nil
 }
