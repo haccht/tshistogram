@@ -81,28 +81,28 @@ var guessRules = []guessRule{
 	{regexp.MustCompile(`\d{1,2}:\d{2}(AM|PM)`), []string{"kitchen"}},
 }
 
-var barCharStyles = []string{"|", "x", "o", "*", "@", "+", "$", "%", "-", "&", "=", "/"}
-var barColorStyles = []string{
-	"\x1b[31m", // Red
-	"\x1b[32m", // Green
-	"\x1b[33m", // Yellow
-	"\x1b[34m", // Blue
-	"\x1b[35m", // Magenta
-	"\x1b[36m", // Cyan
-	"\x1b[91m", // Bright Red
-	"\x1b[92m", // Bright Green
-	"\x1b[93m", // Bright Yellow
-	"\x1b[94m", // Bright Blue
-	"\x1b[95m", // Bright Magenta
-	"\x1b[96m", // Bright Cyan
+type barStyle struct {
+	char  string
+	color string
 }
 
-const barColorReset = "\x1b[0m"
+var barStyles = []barStyle{
+	{"|", "\x1b[31m"}, // Red
+	{"x", "\x1b[32m"}, // Green
+	{"o", "\x1b[33m"}, // Yellow
+	{"*", "\x1b[34m"}, // Blue
+	{"+", "\x1b[35m"}, // Magenta
+	{"#", "\x1b[36m"}, // Cyan
+}
 
-type barStyle int
+const blockBarChar = "▇"
+const barColorReset = "\x1b[0m"
+const otherSeriesName = "(Other)"
+
+type barStyleOption int
 
 const (
-	barCharStyle barStyle = iota
+	barCharStyle barStyleOption = iota
 	barColorStyle
 )
 
@@ -141,9 +141,9 @@ func parseFlags() (*options, error) {
 
 	pflag.StringVarP(&opts.format, "format", "f", "", "Input time format (default: auto)")
 	pflag.DurationVarP(&opts.interval, "interval", "i", 5*time.Minute, "Bin width as duration (e.g. 30s, 1m, 1h)")
-	pflag.IntVarP(&opts.barlen, "barlength", "b", 60, "Length of the longest bar")
+	pflag.IntVarP(&opts.barlen, "barlength", "b", 120, "Length of the longest bar")
 	pflag.VarP(&opts.location, "location", "l", "Timezone location (e.g., UTC, Asia/Tokyo)")
-	pflag.StringVar(&opts.color, "color", "auto", "Markup bar color (never|always|auto)")
+	pflag.StringVar(&opts.color, "color", "auto", "Markup bar color [never|always|auto]")
 
 	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
@@ -265,7 +265,7 @@ type bins struct {
 	size    time.Duration
 	total   int
 	counts  []map[string]int
-	series  map[string]bool
+	series  map[string]struct{}
 	minTime time.Time
 	maxTime time.Time
 }
@@ -274,7 +274,7 @@ func newBins(size time.Duration) *bins {
 	return &bins{
 		size:   size,
 		counts: []map[string]int{},
-		series: make(map[string]bool),
+		series: make(map[string]struct{}),
 	}
 }
 
@@ -292,7 +292,7 @@ func (b *bins) add(t time.Time, seriesName string) {
 
 	idx := int(t.Sub(b.base) / b.size)
 	b.total++
-	b.series[seriesName] = true
+	b.series[seriesName] = struct{}{}
 
 	switch {
 	case idx < 0:
@@ -353,7 +353,7 @@ func run() error {
 		return nil
 	}
 
-	var style barStyle
+	var style barStyleOption
 	switch opts.color {
 	case "always":
 		style = barColorStyle
@@ -369,23 +369,71 @@ func run() error {
 		return fmt.Errorf("invalid color \"%s\"", opts.color)
 	}
 
-	seriesNames := slices.Collect(maps.Keys(b.series))
-	slices.Sort(seriesNames)
+	var seriesNames []string
+	var seriesLimit = len(barStyles) + 1
+
+	if len(b.series) > seriesLimit {
+		seriesTotals := make(map[string]int)
+		for _, binCounts := range b.counts {
+			for seriesName, count := range binCounts {
+				seriesTotals[seriesName] += count
+			}
+		}
+
+		allSeriesNames := slices.Collect(maps.Keys(b.series))
+		slices.SortFunc(allSeriesNames, func(a, b string) int {
+			if seriesTotals[b] != seriesTotals[a] {
+				return seriesTotals[b] - seriesTotals[a]
+			}
+			return strings.Compare(a, b)
+		})
+
+		topSeries := allSeriesNames[:seriesLimit-2]
+		otherSeriesSet := make(map[string]struct{})
+		for _, s := range allSeriesNames[seriesLimit-2:] {
+			otherSeriesSet[s] = struct{}{}
+		}
+
+		newCounts := make([]map[string]int, len(b.counts))
+		for i, binCounts := range b.counts {
+			newBinCounts := make(map[string]int)
+			for seriesName, count := range binCounts {
+				if _, isOther := otherSeriesSet[seriesName]; isOther {
+					newBinCounts[otherSeriesName] += count
+				} else {
+					newBinCounts[seriesName] = count
+				}
+			}
+			newCounts[i] = newBinCounts
+		}
+		b.counts = newCounts
+
+		slices.Sort(topSeries)
+		seriesNames = append(topSeries, otherSeriesName)
+
+		b.series = make(map[string]struct{})
+		for _, name := range seriesNames {
+			b.series[name] = struct{}{}
+		}
+	} else {
+		seriesNames = slices.Collect(maps.Keys(b.series))
+		slices.Sort(seriesNames)
+	}
 
 	var styleFunc func(string, int) string
 	if style == barCharStyle {
 		styleFunc = func(name string, count int) string {
 			idx := slices.Index(seriesNames, name)
-			chr := barCharStyles[idx%len(barCharStyles)]
+			chr := barStyles[idx%len(barStyles)].char
 			bar := strings.Repeat(chr, count)
 			return bar
 		}
 	} else {
 		styleFunc = func(name string, count int) string {
 			idx := slices.Index(seriesNames, name)
-			chr := barCharStyles[0]
+			chr := blockBarChar
 			bar := strings.Repeat(chr, count)
-			return barColorStyles[idx%len(barCharStyles)] + bar + barColorReset
+			return barStyles[idx%len(barStyles)].color + bar + barColorReset
 		}
 	}
 

@@ -13,7 +13,7 @@ Options:
   -i, --interval duration   Bin width as duration (e.g. 30s, 1m, 1h) (default 5m0s)
   -b, --barlength int       Length of the longest bar (default 60)
   -l, --location location   Timezone location (e.g., UTC, Asia/Tokyo) (default Local)
-      --color string        Markup the bar: 'never', 'always', 'auto' (default "auto")
+      --color string        Markup bar color [never|always|auto] (default "auto")
 
 Format Examples:
   ANSIC       "Mon Jan _2 15:04:05 2006"
