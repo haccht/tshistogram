@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"maps"
 	"slices"
@@ -100,13 +99,21 @@ var barColors = []string{
 }
 const colorReset = "\x1b[0m"
 
+type barStyle int
+
+const (
+	charStyle barStyle = iota
+	colorStyle
+)
+
+type styleFunc func(string, int) string
+
 type options struct {
 	format   string
 	interval time.Duration
 	barlen   int
 	location locationValue
 	color    string
-	reader   io.Reader
 }
 
 type locationValue struct {
@@ -143,7 +150,7 @@ func parseFlags() (*options, error) {
 	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage:")
-		fmt.Fprintf(os.Stderr, "  %s [Options] [file...]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  tshistogram [Options] [file...]\n\n")
 		fmt.Fprintln(os.Stderr, "Options:")
 		fmt.Fprintf(os.Stderr, "%s\n", pflag.CommandLine.FlagUsages())
 		fmt.Fprintln(os.Stderr, "Format Examples:")
@@ -152,14 +159,31 @@ func parseFlags() (*options, error) {
 	}
 
 	pflag.Parse()
-	reader, err := genReader(pflag.Args())
-	if err != nil {
-		return nil, err
-	}
-	opts.reader= reader
 	opts.format = strings.ToLower(opts.format)
 
 	return &opts, nil
+}
+
+type multiFileReader struct {
+	reader io.Reader
+	files  []*os.File
+}
+
+func (mfr *multiFileReader) Read(p []byte) (n int, err error) {
+	return mfr.reader.Read(p)
+}
+
+func (mfr *multiFileReader) Close() error {
+	var closeErrors []error
+	for _, f := range mfr.files {
+		if err := f.Close(); err != nil {
+			closeErrors = append(closeErrors, err)
+		}
+	}
+	if len(closeErrors) > 0 {
+		return fmt.Errorf("failed to close files: %v", closeErrors)
+	}
+	return nil
 }
 
 func genReader(inputs []string) (io.Reader, error) {
@@ -167,16 +191,27 @@ func genReader(inputs []string) (io.Reader, error) {
 		return os.Stdin, nil
 	}
 
-	readers := make([]io.Reader, 0)
-	for _, file := range inputs {
+	files := make([]*os.File, len(inputs))
+	for i, file := range inputs {
 		f, err := os.Open(file)
 		if err != nil {
+			for j := 0; j < i; j++ {
+				files[j].Close()
+			}
 			return nil, err
 		}
-		defer f.Close()
-		readers = append(readers, f)
+		files[i] = f
 	}
-	return io.MultiReader(readers...), nil
+
+	readers := make([]io.Reader, len(files))
+	for i, f := range files {
+		readers[i] = f
+	}
+
+	return &multiFileReader{
+		reader: io.MultiReader(readers...),
+		files:  files,
+	}, nil
 }
 
 func stringToTime(s, format string) (time.Time, error) {
@@ -270,8 +305,16 @@ func run() error {
 		return err
 	}
 
+	reader, err := genReader(pflag.Args())
+	if err != nil {
+		return err
+	}
+	if c, ok := reader.(io.Closer); ok {
+		defer c.Close()
+	}
+
 	b := newBins(opts.interval)
-	scanner := bufio.NewScanner(opts.reader)
+	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		fields := strings.Fields(strings.TrimSpace(scanner.Text()))
 		if len(fields) == 0 {
@@ -303,17 +346,17 @@ func run() error {
 		return nil
 	}
 
-	var style string
+	var style barStyle
 	switch opts.color {
 	case "always":
-		style = "color"
+		style = colorStyle
 	case "never":
-		style = "char"
+		style = charStyle
 	default: // "auto"
 		if len(b.series) > 1 {
-			style = "color"
+			style = colorStyle
 		} else {
-			style = "char"
+			style = charStyle
 		}
 	}
 
@@ -323,20 +366,30 @@ func run() error {
 	seriesNames := slices.Collect(maps.Keys(b.series))
 	slices.Sort(seriesNames)
 
+	var barStyler styleFunc
 	charStyles := make(map[string]rune)
 	colorStyles := make(map[string]string)
-	for i, name := range seriesNames {
-		if style == "char" {
+
+	if style == charStyle {
+		for i, name := range seriesNames {
 			charStyles[name] = barChars[i%len(barChars)]
-		} else {
+		}
+		barStyler = func(name string, length int) string {
+			return strings.Repeat(string(charStyles[name]), length)
+		}
+	} else {
+		for i, name := range seriesNames {
 			colorStyles[name] = barColors[i%len(barColors)]
+		}
+		barStyler = func(name string, length int) string {
+			return colorStyles[name] + strings.Repeat("|", length) + colorReset
 		}
 	}
 
 	if len(seriesNames) != 1 || seriesNames[0] != "" {
 		fmt.Println("Legend:")
 		for _, name := range seriesNames {
-			if style == "color" {
+			if style == colorStyle {
 				fmt.Printf("    %s|%s = %s\n", colorStyles[name], colorReset, name)
 			} else {
 				fmt.Printf("    %c = %s\n", charStyles[name], name)
@@ -399,13 +452,7 @@ func run() error {
 		var barBuilder strings.Builder
 		for _, seriesName := range seriesNames {
 			if barPartLen, ok := barLens[seriesName]; ok && barPartLen > 0 {
-				if style == "color" {
-					barBuilder.WriteString(colorStyles[seriesName])
-					barBuilder.WriteString(strings.Repeat("|", barPartLen))
-					barBuilder.WriteString(colorReset)
-				} else {
-					barBuilder.WriteString(strings.Repeat(string(charStyles[seriesName]), barPartLen))
-				}
+				barBuilder.WriteString(barStyler(seriesName, barPartLen))
 			}
 		}
 

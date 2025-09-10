@@ -6,42 +6,39 @@ Render time series data as a histogram in the terminal.
 ```
 $ tshistogram -h
 Usage:
-  tshistogram [Options]
+  tshistogram [Options] [file...]
 
-Application Options:
-  -f, --format=    Time format for parsing the input text (default: RFC3339)
-  -i, --interval=  Time duration for aggregation (default: 5m)
-      --time-from= Time to display the chart from
-      --time-to=   Time to display the chart to
-      --time-zone= TimeZone to display the time (default: UTC)
-      --barlength= Bar length of the chart (default: 60)
-      --bound=     Upper bound of the chart
-  -h, --help       Show this help message
+Options:
+  -f, --format string       Input time format (default: auto)
+  -i, --interval duration   Bin width as duration (e.g. 30s, 1m, 1h) (default 5m0s)
+  -b, --barlength int       Length of the longest bar (default 60)
+  -l, --location location   Timezone location (e.g., UTC, Asia/Tokyo) (default Local)
+      --color string        Markup the bar: 'never', 'always', 'auto' (default "auto")
 
 Format Examples:
-    ANSIC       "Mon Jan _2 15:04:05 2006"
-    UnixDate    "Mon Jan _2 15:04:05 MST 2006"
-    RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
-    RFC822      "02 Jan 06 15:04 MST"
-    RFC822Z     "02 Jan 06 15:04 -0700"
-    RFC850      "Monday, 02-Jan-06 15:04:05 MST"
-    RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
-    RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
-    RFC3339     "2006-01-02T15:04:05Z07:00"
-    RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
-    Kitchen     "3:04PM"
-    Stamp       "Jan _2 15:04:05"
-    StampMilli  "Jan _2 15:04:05.000"
-    StampMicro  "Jan _2 15:04:05.000000"
-    StampNano   "Jan _2 15:04:05.000000000"
-    DateTime    "2006-01-02 15:04:05"
-    DateOnly    "2006-01-02"
-    TimeOnly    "15:04:05"
-    Unix        "1136239445"
-    Unix-Milli  "1136239445000"
-    Unix-Micro  "1136239445000000"
+  ANSIC       "Mon Jan _2 15:04:05 2006"
+  UnixDate    "Mon Jan _2 15:04:05 MST 2006"
+  RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
+  RFC822      "02 Jan 06 15:04 MST"
+  RFC822Z     "02 Jan 06 15:04 -0700"
+  RFC850      "Monday, 02-Jan-06 15:04:05 MST"
+  RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
+  RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
+  RFC3339     "2006-01-02T15:04:05Z07:00"
+  RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
+  Kitchen     "3:04PM"
+  Stamp       "Jan _2 15:04:05"
+  StampMilli  "Jan _2 15:04:05.000"
+  StampMicro  "Jan _2 15:04:05.000000"
+  StampNano   "Jan _2 15:04:05.000000000"
+  DateTime    "2006-01-02 15:04:05"
+  DateOnly    "2006-01-02"
+  TimeOnly    "15:04:05"
+  Unix        "1136239445"
+  Unix-Milli  "1136239445000"
+  Unix-Micro  "1136239445000000"
 
-    Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.
+  Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.
 ```
 
 `tshistogram` render histograms from the given list of time series list.
