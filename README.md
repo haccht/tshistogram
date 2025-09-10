@@ -130,21 +130,21 @@ Time range  = 2023-11-05T09:19:13+09:00 - 2023-11-09T15:07:59+09:00
 Here is an example with multi-series data. The `--color=never` flag is used to render the histogram with different characters for each series, which is useful for environments that don't support ANSI color codes.
 
 ```
-$ cat <<EOF | go run main.go -i 1m --color never
-2023-11-09T10:00:15Z seriesA
-2023-11-09T10:00:25Z seriesA
-2023-11-09T10:00:35Z seriesB
-2023-11-09T10:01:05Z seriesA
-2023-11-09T10:01:45Z seriesC
-2023-11-09T10:01:55Z seriesB
-EOF
+$ cat <<EOF | go run main.go -i 1m --color=never
+> 2023-11-09T10:00:15Z seriesA
+> 2023-11-09T10:00:25Z seriesA
+> 2023-11-09T10:00:35Z seriesB
+> 2023-11-09T10:01:05Z seriesA
+> 2023-11-09T10:01:45Z seriesC
+> 2023-11-09T10:01:55Z seriesB
+> EOF
 Total count: 6
-Time range:  2023-11-09T10:00:15Z - 2023-11-09T10:01:55Z
+Time range:  2023-11-09T19:00:15+09:00 - 2023-11-09T19:01:55+09:00
 Legend:
     | = seriesA
     x = seriesB
     o = seriesC
 
- [ 2023-11-09T10:00:00Z ]      3  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
- [ 2023-11-09T10:01:00Z ]      3  ||||||||||||||||||||||||||||||||||||||||xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxoooooooooooooooooooooooooooooooooooooooo
+ [ 2023-11-09T19:00:00+09:00 ]      3  ||||||||||||||||||||||||||||||||||||||||xxxxxxxxxxxxxxxxxxxx
+ [ 2023-11-09T19:01:00+09:00 ]      3  ||||||||||||||||||||xxxxxxxxxxxxxxxxxxxxoooooooooooooooooooo
 ```
