@@ -130,7 +130,7 @@ Time range  = 2023-11-05T09:19:13+09:00 - 2023-11-09T15:07:59+09:00
 Here is an example with multi-series data. The `--color=never` flag is used to render the histogram with different characters for each series, which is useful for environments that don't support ANSI color codes.
 
 ```
-$ cat <<EOF | go run main.go -i 1m --color=never
+$ cat <<EOF | tshistogram -i 1m --color=never
 > 2023-11-09T10:00:15Z seriesA
 > 2023-11-09T10:00:25Z seriesA
 > 2023-11-09T10:00:35Z seriesB
