@@ -87,12 +87,22 @@ type barStyle struct {
 }
 
 var barStyles = []barStyle{
-	{"|", "\x1b[31m"}, // Red
-	{"x", "\x1b[32m"}, // Green
-	{"o", "\x1b[33m"}, // Yellow
-	{"*", "\x1b[34m"}, // Blue
-	{"+", "\x1b[35m"}, // Magenta
-	{"#", "\x1b[36m"}, // Cyan
+	{"|", "\x1b[34m"},
+	{"#", "\x1b[31m"},
+	{"$", "\x1b[32m"},
+	{"%", "\x1b[35m"},
+	{"&", "\x1b[36m"},
+	{"*", "\x1b[33m"},
+	{"=", "\x1b[30m"},
+	{"1", "\x1b[37m"},
+	{"2", "\x1b[94m"},
+	{"3", "\x1b[91m"},
+	{"4", "\x1b[92m"},
+	{"5", "\x1b[95m"},
+	{"6", "\x1b[96m"},
+	{"7", "\x1b[93m"},
+	{"8", "\x1b[90m"},
+	{"9", "\x1b[97m"},
 }
 
 const blockBarChar = "▇"
@@ -110,6 +120,7 @@ type options struct {
 	format   string
 	interval time.Duration
 	barlen   int
+	limit    int
 	location locationValue
 	color    string
 }
@@ -142,6 +153,7 @@ func parseFlags() (*options, error) {
 	pflag.StringVarP(&opts.format, "format", "f", "", "Input time format (default: auto)")
 	pflag.DurationVarP(&opts.interval, "interval", "i", 5*time.Minute, "Bin width as duration (e.g. 30s, 1m, 1h)")
 	pflag.IntVarP(&opts.barlen, "barlength", "b", 120, "Length of the longest bar")
+	pflag.IntVarP(&opts.limit, "limit", "L", len(barStyles), "Maximun number of series")
 	pflag.VarP(&opts.location, "location", "l", "Timezone location (e.g., UTC, Asia/Tokyo)")
 	pflag.StringVar(&opts.color, "color", "auto", "Markup bar color [never|always|auto]")
 
@@ -370,7 +382,7 @@ func run() error {
 	}
 
 	var seriesNames []string
-	var seriesLimit = len(barStyles) + 1
+	var seriesLimit = opts.limit
 
 	if len(b.series) > seriesLimit {
 		seriesTotals := make(map[string]int)
@@ -388,9 +400,9 @@ func run() error {
 			return strings.Compare(a, b)
 		})
 
-		topSeries := allSeriesNames[:seriesLimit-2]
+		topSeries := allSeriesNames[:seriesLimit-1]
 		otherSeriesSet := make(map[string]struct{})
-		for _, s := range allSeriesNames[seriesLimit-2:] {
+		for _, s := range allSeriesNames[seriesLimit-1:] {
 			otherSeriesSet[s] = struct{}{}
 		}
 

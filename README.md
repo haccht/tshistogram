@@ -14,9 +14,10 @@ Usage:
   tshistogram [Options] [file...]
 
 Options:
-  -f, --format string       Input time format. By default, it automatically detects the format.
+  -f, --format string       Input time format (default: auto)
   -i, --interval duration   Bin width as duration (e.g. 30s, 1m, 1h) (default 5m0s)
-  -b, --barlength int       Length of the longest bar (default 60)
+  -b, --barlength int       Length of the longest bar (default 120)
+  -L, --limit int           Maximun number of series (default 16)
   -l, --location location   Timezone location (e.g., UTC, Asia/Tokyo) (default Local)
       --color string        Markup bar color [never|always|auto] (default "auto")
 
