@@ -17,8 +17,8 @@ Options:
   -f, --format string       Input time format (default: auto)
   -i, --interval duration   Bin width as duration (e.g. 30s, 1m, 1h) (default 5m0s)
   -b, --barlength int       Length of the longest bar (default 120)
-  -L, --limit int           Maximun number of series (default 16)
-  -l, --location location   Timezone location (e.g., UTC, Asia/Tokyo) (default Local)
+  -L, --limit int           Maximum number of series to display (default 16)
+  -l, --location location   Time zone location (e.g., UTC, Asia/Tokyo) (default Local)
       --color string        Markup bar color [never|always|auto] (default "auto")
 
 Format Examples:
@@ -74,7 +74,7 @@ Nov  9 05:44:54
 Nov  9 05:45:01
 Nov  9 05:45:12
 
-$ cat /var/log/syslog | tail -10000 | cut -c1-15 | tshistogram -i 15m -f stamp --time-zone Asia/Tokyo
+$ cat /var/log/syslog | tail -10000 | cut -c1-15 | tshistogram -i 15m -f stamp --location Asia/Tokyo
 Total count = 10000
 Time range  = 2023-11-09T09:55:33+09:00 - 2023-11-09T15:01:18+09:00
 
@@ -102,7 +102,7 @@ Time range  = 2023-11-09T09:55:33+09:00 - 2023-11-09T15:01:18+09:00
  [ 2023-11-09T15:00:00+09:00 ]     47  |||
 
 
-$ cat /var/log/syslog | cut -c1-15 | tshistogram -i 6h -f stamp --time-zone Asia/Tokyo
+$ cat /var/log/syslog | cut -c1-15 | tshistogram -i 6h -f stamp --location Asia/Tokyo
 Total count = 202378
 Time range  = 2023-11-05T09:19:13+09:00 - 2023-11-09T15:07:59+09:00
 
