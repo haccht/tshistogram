@@ -117,12 +117,13 @@ const (
 )
 
 type options struct {
-	format   string
-	interval time.Duration
-	barlen   int
-	limit    int
-	location locationValue
-	color    string
+	format    string
+	interval  time.Duration
+	barlen    int
+	limit     int
+	location  locationValue
+	color     string
+	separator string
 }
 
 type locationValue struct {
@@ -156,6 +157,7 @@ func parseFlags() (*options, error) {
 	pflag.IntVarP(&opts.limit, "limit", "L", len(barStyles), "Maximun number of series")
 	pflag.VarP(&opts.location, "location", "l", "Timezone location (e.g., UTC, Asia/Tokyo)")
 	pflag.StringVar(&opts.color, "color", "auto", "Markup bar color [never|always|auto]")
+	pflag.StringVarP(&opts.separator, "separator", "F", " ", "Field separator between timestamp and series")
 
 	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
@@ -256,12 +258,16 @@ func guessTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unknown format: %s", s)
 }
 
-func parseLeadingTime(s, format string) (time.Time, string) {
-	fields := strings.Split(s, " ")
+func parseLeadingTime(s, format, separator string) (time.Time, string) {
+	if separator == "" {
+		separator = " "
+	}
+
+	fields := strings.Split(s, separator)
 
 	for i := range len(fields) {
-		part1 := strings.Join(fields[:i+1], " ")
-		part2 := strings.Join(fields[i+1:], " ")
+		part1 := strings.Join(fields[:i+1], separator)
+		part2 := strings.Join(fields[i+1:], separator)
 
 		t, err := stringToTime(part1, format)
 		if err == nil {
@@ -344,7 +350,7 @@ func run() error {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		t, seriesName := parseLeadingTime(line, opts.format)
+		t, seriesName := parseLeadingTime(line, opts.format, opts.separator)
 		if t.IsZero() {
 			continue
 		}

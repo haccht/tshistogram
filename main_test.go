@@ -53,3 +53,20 @@ func TestStringToTimeAutoDetectRFC3339(t *testing.T) {
 		t.Fatalf("unexpected time\nexpected: %v\n     got: %v", expected, got)
 	}
 }
+
+func TestParseLeadingTimeWithSeparator(t *testing.T) {
+	input := "2006-01-02T15:04:05Z,series-name,detail"
+
+	wantTime := time.Date(2006, time.January, 2, 15, 4, 5, 0, time.UTC)
+	wantSeries := "series-name,detail"
+
+	gotTime, gotSeries := parseLeadingTime(input, "rfc3339", ",")
+
+	if !gotTime.Equal(wantTime) {
+		t.Fatalf("unexpected time\\nexpected: %v\\n     got: %v", wantTime, gotTime)
+	}
+
+	if gotSeries != wantSeries {
+		t.Fatalf("unexpected series\\nexpected: %q\\n     got: %q", wantSeries, gotSeries)
+	}
+}
