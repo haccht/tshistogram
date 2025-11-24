@@ -20,6 +20,7 @@ Options:
   -L, --limit int           Maximum number of series to display (default 16)
   -l, --location location   Time zone location (e.g., UTC, Asia/Tokyo) (default Local)
       --color string        Markup bar color [never|always|auto] (default "auto")
+  -F, --separator string    Field separator between timestamp and series (default " ")
 
 Format Examples:
   ANSIC       "Mon Jan _2 15:04:05 2006"
