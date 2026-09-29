@@ -73,6 +73,30 @@ func TestParseLeadingTimeWithSeparator(t *testing.T) {
 	}
 }
 
+func TestBinsAddEarlierTimeUsesPreviousBin(t *testing.T) {
+	b := newBins(time.Minute)
+	base := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)
+
+	b.add(base.Add(30*time.Second), "later")
+	b.add(base.Add(-time.Second), "earlier")
+
+	if !b.base.Equal(base.Add(-time.Minute)) {
+		t.Fatalf("unexpected base\nexpected: %v\n     got: %v", base.Add(-time.Minute), b.base)
+	}
+	if got := totalCount(b.counts[0]); got != 1 {
+		t.Fatalf("previous bin count = %d, want 1", got)
+	}
+	if got := totalCount(b.counts[1]); got != 1 {
+		t.Fatalf("original bin count = %d, want 1", got)
+	}
+	if got := b.counts[0]["earlier"]; got != 1 {
+		t.Fatalf("earlier series count = %d, want 1", got)
+	}
+	if got := b.counts[1]["later"]; got != 1 {
+		t.Fatalf("later series count = %d, want 1", got)
+	}
+}
+
 func TestRenderHistogramNeverUsesDistinctCharsPerSeries(t *testing.T) {
 	b := newBins(time.Minute)
 	base := time.Date(2024, time.January, 2, 3, 4, 0, 0, time.UTC)

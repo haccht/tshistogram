@@ -307,6 +307,15 @@ func newBins(size time.Duration) *bins {
 	}
 }
 
+func binIndex(t, base time.Time, size time.Duration) int {
+	delta := t.Sub(base)
+	idx := delta / size
+	if delta < 0 && delta%size != 0 {
+		idx--
+	}
+	return int(idx)
+}
+
 func (b *bins) add(t time.Time, seriesName string) {
 	if b.minTime.IsZero() || t.Before(b.minTime) {
 		b.minTime = t
@@ -319,7 +328,7 @@ func (b *bins) add(t time.Time, seriesName string) {
 		b.base = t.Truncate(b.size)
 	}
 
-	idx := int(t.Sub(b.base) / b.size)
+	idx := binIndex(t, b.base, b.size)
 	b.total++
 	b.series[seriesName] = struct{}{}
 
