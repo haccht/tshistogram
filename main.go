@@ -135,6 +135,8 @@ type options struct {
 	location  locationValue
 	color     string
 	separator string
+	strict    bool
+	verbose   bool
 }
 
 type locationValue struct {
@@ -165,10 +167,12 @@ func parseFlags() (*options, error) {
 	pflag.StringVarP(&opts.format, "format", "f", "", "Input time format (default: auto)")
 	pflag.DurationVarP(&opts.interval, "interval", "i", 5*time.Minute, "Bin width as duration (e.g. 30s, 1m, 1h)")
 	pflag.IntVarP(&opts.barlen, "barlength", "b", 80, "Length of the longest bar")
-	pflag.IntVarP(&opts.limit, "limit", "L", len(barStyles), "Maximun number of series")
+	pflag.IntVarP(&opts.limit, "limit", "L", len(barStyles), "Maximum number of series")
 	pflag.VarP(&opts.location, "location", "l", "Timezone location (e.g., UTC, Asia/Tokyo)")
 	pflag.StringVar(&opts.color, "color", "auto", "Markup bar color [never|always|auto]")
 	pflag.StringVarP(&opts.separator, "separator", "F", " ", "Field separator between timestamp and series")
+	pflag.BoolVar(&opts.strict, "strict", false, "Stop at the first line with an invalid timestamp")
+	pflag.BoolVarP(&opts.verbose, "verbose", "v", false, "Report each skipped input line")
 
 	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
@@ -182,7 +186,26 @@ func parseFlags() (*options, error) {
 	}
 
 	pflag.Parse()
+	if err := validateOptions(&opts); err != nil {
+		return nil, err
+	}
 	return &opts, nil
+}
+
+func validateOptions(opts *options) error {
+	if opts.interval <= 0 {
+		return fmt.Errorf("interval must be greater than zero")
+	}
+	if opts.barlen <= 0 {
+		return fmt.Errorf("barlength must be greater than zero")
+	}
+	if opts.limit <= 0 {
+		return fmt.Errorf("limit must be greater than zero")
+	}
+	if _, err := resolveBarStyle(opts.color, 0, false); err != nil {
+		return err
+	}
+	return nil
 }
 
 type multiFileReader struct {
@@ -236,9 +259,13 @@ func genReader(inputs []string) (io.Reader, error) {
 }
 
 func stringToTime(s, format string) (time.Time, error) {
+	return stringToTimeInLocation(s, format, time.UTC)
+}
+
+func stringToTimeInLocation(s, format string, location *time.Location) (time.Time, error) {
 	lformat := strings.ToLower(format)
 	if lformat == "" {
-		return guessTime(s)
+		return guessTimeInLocation(s, location)
 	}
 
 	if scale, ok := epochLayouts[lformat]; ok {
@@ -250,17 +277,21 @@ func stringToTime(s, format string) (time.Time, error) {
 	}
 
 	if layout, ok := knownLayouts[lformat]; ok {
-		return time.Parse(layout, s)
+		return time.ParseInLocation(layout, s, location)
 	}
 
-	return time.Parse(format, s)
+	return time.ParseInLocation(format, s, location)
 }
 
 func guessTime(s string) (time.Time, error) {
+	return guessTimeInLocation(s, time.UTC)
+}
+
+func guessTimeInLocation(s string, location *time.Location) (time.Time, error) {
 	for _, rule := range guessRules {
 		if rule.re.MatchString(s) {
 			for _, l := range rule.layouts {
-				if t, err := stringToTime(s, l); err == nil {
+				if t, err := stringToTimeInLocation(s, l, location); err == nil {
 					return t, nil
 				}
 			}
@@ -270,23 +301,30 @@ func guessTime(s string) (time.Time, error) {
 }
 
 func parseLeadingTime(s, format, separator string) (time.Time, string) {
+	t, series, _ := parseLeadingTimeInLocation(s, format, separator, time.UTC)
+	return t, series
+}
+
+func parseLeadingTimeInLocation(s, format, separator string, location *time.Location) (time.Time, string, error) {
 	if separator == "" {
 		separator = " "
 	}
 
 	fields := strings.Split(s, separator)
 
-	for i := range len(fields) {
+	// Try the longest prefix first so an auto-detected DateOnly layout does not
+	// consume the date portion of a DateTime timestamp.
+	for i := len(fields) - 1; i >= 0; i-- {
 		part1 := strings.Join(fields[:i+1], separator)
 		part2 := strings.Join(fields[i+1:], separator)
 
-		t, err := stringToTime(part1, format)
+		t, err := stringToTimeInLocation(part1, format, location)
 		if err == nil {
-			return t, part2
+			return t, part2, nil
 		}
 	}
 
-	return time.Time{}, s
+	return time.Time{}, s, fmt.Errorf("unknown timestamp format")
 }
 
 type bins struct {
@@ -584,7 +622,7 @@ func renderBins(w io.Writer, b *bins, counts []map[string]int, opts *options, re
 
 func renderHistogram(w io.Writer, b *bins, opts *options) error {
 	if b.total == 0 {
-		fmt.Fprintln(w, "Total count = 0")
+		fmt.Fprintln(w, "Total count: 0")
 		return nil
 	}
 
@@ -602,6 +640,47 @@ func renderHistogram(w io.Writer, b *bins, opts *options) error {
 	return renderBins(w, b, display.counts, opts, renderer, display.seriesNames)
 }
 
+func collectBins(reader io.Reader, diagnostics io.Writer, opts *options) (*bins, error) {
+	b := newBins(opts.interval)
+	scanner := bufio.NewScanner(reader)
+	lineNumber := 0
+	skipped := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		t, seriesName, err := parseLeadingTimeInLocation(line, opts.format, opts.separator, opts.location.Location)
+		if err != nil {
+			if opts.strict {
+				return nil, fmt.Errorf("line %d: %w: %q", lineNumber, err, line)
+			}
+			skipped++
+			if opts.verbose {
+				fmt.Fprintf(diagnostics, "skipped line %d: %v: %q\n", lineNumber, err, line)
+			}
+			continue
+		}
+
+		t = t.In(opts.location.Location)
+		if t.Year() == 0 {
+			t = t.AddDate(time.Now().Year(), 0, 0)
+		}
+
+		b.add(t, seriesName)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if skipped > 0 {
+		fmt.Fprintf(diagnostics, "Skipped lines: %d\n", skipped)
+	}
+
+	return b, nil
+}
+
 func run() error {
 	opts, err := parseFlags()
 	if err != nil {
@@ -616,24 +695,8 @@ func run() error {
 		defer c.Close()
 	}
 
-	b := newBins(opts.interval)
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		t, seriesName := parseLeadingTime(line, opts.format, opts.separator)
-		if t.IsZero() {
-			continue
-		}
-
-		t = t.In(opts.location.Location)
-		if t.Year() == 0 {
-			t = t.AddDate(time.Now().Year(), 0, 0)
-		}
-
-		b.add(t, seriesName)
-	}
-	if err := scanner.Err(); err != nil {
+	b, err := collectBins(reader, os.Stderr, opts)
+	if err != nil {
 		return err
 	}
 

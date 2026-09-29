@@ -6,6 +6,7 @@ Render time series data as a histogram in the terminal.
 
 - **Automatic timestamp parsing**: By default, `tshistogram` automatically detects and parses various common timestamp formats. If you have a specific or ambiguous format, you can specify it with the `-f` option.
 - **Multi-series support**: `tshistogram` can process multiple time series from standard input or multiple files. The text on the line following the timestamp is treated as the series name. The histogram will then show different series with different colors (or characters) and display a legend.
+- **Input diagnostics**: Invalid timestamps are counted and reported. Use `--verbose` to see each skipped line or `--strict` to stop at the first invalid line.
 
 ## Usage
 ```
@@ -16,11 +17,13 @@ Usage:
 Options:
   -f, --format string       Input time format (default: auto)
   -i, --interval duration   Bin width as duration (e.g. 30s, 1m, 1h) (default 5m0s)
-  -b, --barlength int       Length of the longest bar (default 120)
-  -L, --limit int           Maximum number of series to display (default 16)
+  -b, --barlength int       Length of the longest bar (default 80)
+  -L, --limit int           Maximum number of series (default 16)
   -l, --location location   Time zone location (e.g., UTC, Asia/Tokyo) (default Local)
       --color string        Markup bar color [never|always|auto] (default "auto")
   -F, --separator string    Field separator between timestamp and series (default " ")
+      --strict              Stop at the first line with an invalid timestamp
+  -v, --verbose             Report each skipped input line
 
 Format Examples:
   ANSIC       "Mon Jan _2 15:04:05 2006"
@@ -48,7 +51,12 @@ Format Examples:
   Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.
 ```
 
-`tshistogram` render histograms from the given list of time series list.
+`tshistogram` renders histograms from the given time-series data.
+
+The location selected with `--location` is used to interpret timestamps that do
+not contain a time zone. Timestamps with an explicit offset retain their instant
+and are converted to the selected location for display. Invalid non-empty lines
+are skipped by default and their count is written to standard error.
 
 ```
 $ cat /var/log/syslog | tail -10
@@ -76,8 +84,8 @@ Nov  9 05:45:01
 Nov  9 05:45:12
 
 $ cat /var/log/syslog | tail -10000 | cut -c1-15 | tshistogram -i 15m -f stamp --location Asia/Tokyo
-Total count = 10000
-Time range  = 2023-11-09T09:55:33+09:00 - 2023-11-09T15:01:18+09:00
+Total count: 10000
+Time range:  2023-11-09T09:55:33+09:00 - 2023-11-09T15:01:18+09:00
 
  [ 2023-11-09T09:45:00+09:00 ]    164  ||||||||||||
  [ 2023-11-09T10:00:00+09:00 ]    448  ||||||||||||||||||||||||||||||||||

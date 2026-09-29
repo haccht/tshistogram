@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +71,127 @@ func TestParseLeadingTimeWithSeparator(t *testing.T) {
 
 	if gotSeries != wantSeries {
 		t.Fatalf("unexpected series\\nexpected: %q\\n     got: %q", wantSeries, gotSeries)
+	}
+}
+
+func TestParseLeadingTimeAutoDetectsLongestTimestamp(t *testing.T) {
+	input := "2026-09-29 12:34:56 api"
+	wantTime := time.Date(2026, time.September, 29, 12, 34, 56, 0, time.UTC)
+
+	gotTime, gotSeries := parseLeadingTime(input, "", " ")
+
+	if !gotTime.Equal(wantTime) {
+		t.Fatalf("unexpected time\nexpected: %v\n     got: %v", wantTime, gotTime)
+	}
+	if gotSeries != "api" {
+		t.Fatalf("series = %q, want %q", gotSeries, "api")
+	}
+}
+
+func TestParseLeadingTimeUsesLocationForZoneLessTimestamp(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("time.LoadLocation returned error: %v", err)
+	}
+	want := time.Date(2026, time.September, 29, 12, 34, 56, 0, location)
+
+	got, series, err := parseLeadingTimeInLocation("2026-09-29 12:34:56 api", "datetime", " ", location)
+	if err != nil {
+		t.Fatalf("parseLeadingTimeInLocation returned error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("unexpected time\nexpected: %v\n     got: %v", want, got)
+	}
+	if series != "api" {
+		t.Fatalf("series = %q, want %q", series, "api")
+	}
+}
+
+func TestParseLeadingTimePreservesExplicitTimezone(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("time.LoadLocation returned error: %v", err)
+	}
+	want := time.Date(2026, time.September, 29, 12, 34, 56, 0, time.UTC)
+
+	got, _, err := parseLeadingTimeInLocation("2026-09-29T12:34:56Z api", "rfc3339", " ", location)
+	if err != nil {
+		t.Fatalf("parseLeadingTimeInLocation returned error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("unexpected time\nexpected: %v\n     got: %v", want, got)
+	}
+}
+
+func TestValidateOptions(t *testing.T) {
+	valid := options{interval: time.Minute, barlen: 80, limit: 16, color: "auto"}
+	tests := []struct {
+		name string
+		edit func(*options)
+	}{
+		{name: "zero interval", edit: func(o *options) { o.interval = 0 }},
+		{name: "negative interval", edit: func(o *options) { o.interval = -time.Minute }},
+		{name: "zero bar length", edit: func(o *options) { o.barlen = 0 }},
+		{name: "zero limit", edit: func(o *options) { o.limit = 0 }},
+		{name: "invalid color", edit: func(o *options) { o.color = "sometimes" }},
+	}
+
+	if err := validateOptions(&valid); err != nil {
+		t.Fatalf("valid options returned error: %v", err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := valid
+			tt.edit(&opts)
+			if err := validateOptions(&opts); err == nil {
+				t.Fatal("validateOptions returned nil error")
+			}
+		})
+	}
+}
+
+func TestCollectBinsReportsSkippedLines(t *testing.T) {
+	opts := &options{
+		interval: time.Minute,
+		barlen:   80,
+		limit:    16,
+		location: locationValue{Location: time.UTC},
+		color:    "never",
+		verbose:  true,
+	}
+	input := strings.NewReader("2026-09-29T12:34:56Z api\ninvalid input\n")
+	var diagnostics bytes.Buffer
+
+	b, err := collectBins(input, &diagnostics, opts)
+	if err != nil {
+		t.Fatalf("collectBins returned error: %v", err)
+	}
+	if b.total != 1 {
+		t.Fatalf("total = %d, want 1", b.total)
+	}
+	for _, want := range []string{"skipped line 2:", "Skipped lines: 1"} {
+		if !strings.Contains(diagnostics.String(), want) {
+			t.Fatalf("diagnostics missing %q\n%s", want, diagnostics.String())
+		}
+	}
+}
+
+func TestCollectBinsStrictRejectsInvalidLine(t *testing.T) {
+	opts := &options{
+		interval: time.Minute,
+		barlen:   80,
+		limit:    16,
+		location: locationValue{Location: time.UTC},
+		color:    "never",
+		strict:   true,
+	}
+
+	_, err := collectBins(strings.NewReader("invalid input\n"), io.Discard, opts)
+	if err == nil {
+		t.Fatal("collectBins returned nil error")
+	}
+	if !strings.Contains(err.Error(), "line 1") {
+		t.Fatalf("error missing line number: %v", err)
 	}
 }
 
