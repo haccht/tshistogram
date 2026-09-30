@@ -6,80 +6,16 @@ import (
 	"io"
 	"maps"
 	"os"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/haccht/timeconv"
 	"github.com/spf13/pflag"
 )
 
-const layoutExamples = `  ANSIC       "Mon Jan _2 15:04:05 2006"
-  UnixDate    "Mon Jan _2 15:04:05 MST 2006"
-  RubyDate    "Mon Jan 02 15:04:05 -0700 2006"
-  RFC822      "02 Jan 06 15:04 MST"
-  RFC822Z     "02 Jan 06 15:04 -0700"
-  RFC850      "Monday, 02-Jan-06 15:04:05 MST"
-  RFC1123     "Mon, 02 Jan 2006 15:04:05 MST"
-  RFC1123Z    "Mon, 02 Jan 2006 15:04:05 -0700"
-  RFC3339     "2006-01-02T15:04:05Z07:00"
-  RFC3339Nano "2006-01-02T15:04:05.999999999Z07:00"
-  Kitchen     "3:04PM"
-  Stamp       "Jan _2 15:04:05"
-  StampMilli  "Jan _2 15:04:05.000"
-  StampMicro  "Jan _2 15:04:05.000000"
-  StampNano   "Jan _2 15:04:05.000000000"
-  DateTime    "2006-01-02 15:04:05"
-  DateOnly    "2006-01-02"
-  TimeOnly    "15:04:05"
-  Unix        "1136239445"
-  Unix-Milli  "1136239445000"
-  Unix-Micro  "1136239445000000"
-
-  Arbitrary formats are also supported. See https://pkg.go.dev/time as a reference.`
-
-var knownLayouts = map[string]string{
-	"ansic":       time.ANSIC,
-	"unixdate":    time.UnixDate,
-	"rubydate":    time.RubyDate,
-	"rfc822":      time.RFC822,
-	"rfc822z":     time.RFC822Z,
-	"rfc850":      time.RFC850,
-	"rfc1123":     time.RFC1123,
-	"rfc1123z":    time.RFC1123Z,
-	"rfc3339":     time.RFC3339,
-	"rfc3339nano": time.RFC3339Nano,
-	"kitchen":     time.Kitchen,
-	"stamp":       time.Stamp,
-	"stampmilli":  time.StampMilli,
-	"stampmicro":  time.StampMicro,
-	"stampnano":   time.StampNano,
-	"datetime":    time.DateTime,
-	"dateonly":    time.DateOnly,
-	"timeonly":    time.TimeOnly,
-}
-
-var epochLayouts = map[string]int64{
-	"unix":       1e6,
-	"unix-milli": 1e3,
-	"unix-micro": 1,
-}
-
-type guessRule struct {
-	re      *regexp.Regexp
-	layouts []string
-}
-
-var guessRules = []guessRule{
-	{regexp.MustCompile(`^\d{10,19}(?:\.\d+)?`), []string{"unix", "unix-milli", "unix-micro"}},
-	{regexp.MustCompile(`^\d{4}`), []string{"rfc3339", "rfc3339nano", "datetime", "dateonly"}},
-	{regexp.MustCompile(`[A-Za-z]{3,4}|[+-]\d{4}`), []string{"unixdate", "rubydate", "rfc822", "rfc822z", "rfc850", "rfc1123", "rfc1123z", "rfc3339", "rfc3339nano"}},
-	{regexp.MustCompile(`^[A-Za-z]{3},?`), []string{"ansic", "unixdate", "rubydate", "rfc822", "rfc822z", "rfc850", "rfc1123", "rfc1123z", "stamp", "stampmilli", "stampmicro", "stampnano"}},
-	{regexp.MustCompile(`\d{2}:\d{2}:\d{2}`), []string{"datetime", "timeonly", "ansic", "unixdate", "rubydate", "rfc850", "rfc1123", "rfc1123z"}},
-	{regexp.MustCompile(`\d{1,2}:\d{2}(AM|PM)`), []string{"kitchen"}},
-}
+const layoutExamples = timeconv.LayoutExamples
 
 type barStyle struct {
 	char string
@@ -258,48 +194,6 @@ func genReader(inputs []string) (io.Reader, error) {
 	}, nil
 }
 
-func stringToTime(s, format string) (time.Time, error) {
-	return stringToTimeInLocation(s, format, time.UTC)
-}
-
-func stringToTimeInLocation(s, format string, location *time.Location) (time.Time, error) {
-	lformat := strings.ToLower(format)
-	if lformat == "" {
-		return guessTimeInLocation(s, location)
-	}
-
-	if scale, ok := epochLayouts[lformat]; ok {
-		v, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("failed to parse epoch time: %s", s)
-		}
-		return time.UnixMicro(int64(v * float64(scale))), nil
-	}
-
-	if layout, ok := knownLayouts[lformat]; ok {
-		return time.ParseInLocation(layout, s, location)
-	}
-
-	return time.ParseInLocation(format, s, location)
-}
-
-func guessTime(s string) (time.Time, error) {
-	return guessTimeInLocation(s, time.UTC)
-}
-
-func guessTimeInLocation(s string, location *time.Location) (time.Time, error) {
-	for _, rule := range guessRules {
-		if rule.re.MatchString(s) {
-			for _, l := range rule.layouts {
-				if t, err := stringToTimeInLocation(s, l, location); err == nil {
-					return t, nil
-				}
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("unknown format: %s", s)
-}
-
 func parseLeadingTime(s, format, separator string) (time.Time, string) {
 	t, series, _ := parseLeadingTimeInLocation(s, format, separator, time.UTC)
 	return t, series
@@ -318,7 +212,7 @@ func parseLeadingTimeInLocation(s, format, separator string, location *time.Loca
 		part1 := strings.Join(fields[:i+1], separator)
 		part2 := strings.Join(fields[i+1:], separator)
 
-		t, err := stringToTimeInLocation(part1, format, location)
+		t, err := timeconv.ParseInLocation(part1, format, location)
 		if err == nil {
 			return t, part2, nil
 		}
