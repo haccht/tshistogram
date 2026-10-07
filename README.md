@@ -15,7 +15,7 @@ Usage:
   tshistogram [Options] [file...]
 
 Options:
-  -f, --format string       Input time format (default: auto)
+  -f, --format string       Input time format (default "auto")
   -i, --interval duration   Bin width as duration (e.g. 30s, 1m, 1h) (default 5m0s)
   -b, --barlength int       Length of the longest bar (default 80)
   -L, --limit int           Maximum number of series (default 16)

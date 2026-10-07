@@ -100,7 +100,7 @@ func parseFlags() (*options, error) {
 	var opts options
 	opts.location.Location = time.Local
 
-	pflag.StringVarP(&opts.format, "format", "f", "", "Input time format (default: auto)")
+	pflag.StringVarP(&opts.format, "format", "f", "auto", "Input time format")
 	pflag.DurationVarP(&opts.interval, "interval", "i", 5*time.Minute, "Bin width as duration (e.g. 30s, 1m, 1h)")
 	pflag.IntVarP(&opts.barlen, "barlength", "b", 80, "Length of the longest bar")
 	pflag.IntVarP(&opts.limit, "limit", "L", len(barStyles), "Maximum number of series")
@@ -202,6 +202,9 @@ func parseLeadingTime(s, format, separator string) (time.Time, string) {
 func parseLeadingTimeInLocation(s, format, separator string, location *time.Location) (time.Time, string, error) {
 	if separator == "" {
 		separator = " "
+	}
+	if strings.EqualFold(format, "auto") {
+		format = ""
 	}
 
 	fields := strings.Split(s, separator)

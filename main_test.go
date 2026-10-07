@@ -10,12 +10,26 @@ import (
 
 func TestParseLeadingTimeAutoDetectsUnixMilliseconds(t *testing.T) {
 	want := time.Unix(1698292629, 955000000)
-	got, series := parseLeadingTime("1698292629955 api", "", " ")
+	got, series := parseLeadingTime("1698292629955 api", "auto", " ")
 	if !got.Equal(want) {
 		t.Fatalf("unexpected time\nexpected: %v\n     got: %v", want, got)
 	}
 	if series != "api" {
 		t.Fatalf("series = %q, want %q", series, "api")
+	}
+}
+
+func TestParseLeadingTimeAutoMatchesEmptyFormat(t *testing.T) {
+	input := "2026-09-29T12:34:56Z api"
+
+	wantTime, wantSeries := parseLeadingTime(input, "", " ")
+	gotTime, gotSeries := parseLeadingTime(input, "auto", " ")
+
+	if !gotTime.Equal(wantTime) {
+		t.Fatalf("unexpected time\nexpected: %v\n     got: %v", wantTime, gotTime)
+	}
+	if gotSeries != wantSeries {
+		t.Fatalf("series = %q, want %q", gotSeries, wantSeries)
 	}
 }
 
